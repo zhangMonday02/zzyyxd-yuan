@@ -6,6 +6,7 @@ import tempfile
 import random
 import requests
 import io
+import platform
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -18,10 +19,21 @@ from selenium.webdriver.support import expected_conditions as EC
 from serverchan_sdk import sc_send
 
 try:
+    platform.system()
+except TypeError:
+    # 如果原生调用报错 (can't concat str to bytes)，强制打补丁
+    print("⚠ 检测到 Python 3.7 platform Bug，正在应用补丁...")
+    platform.system = lambda: 'Linux'
+
+try:
     from AliV3 import AliV3
 except ImportError:
-    print("❌ 错误: 未找到 登录依赖(AliV3.py) 文件，请确保同目录下存在该文件，")
+    print("❌ 错误: 未找到 登录依赖(AliV3.py) 文件，请确保同目录下存在该文件")
     sys.exit(1)
+except Exception as e:
+    # 捕获 execjs 可能的其他异常
+    print(f"❌ 导入 AliV3 时发生错误: {e}")
+    pass
 
 # 全局变量用于收集总结日志
 in_summary = False
@@ -588,6 +600,12 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         # 1. 登录流程
         log(f"账号 {account_index} - 正在调用 登录(AliV3) 脚本进行登录...")
         
+        # 确保 AliV3 已加载
+        if 'AliV3' not in globals():
+             log(f"账号 {account_index} - ❌ 登录依赖未正确加载，无法登录")
+             result['oshwhub_status'] = '依赖缺失'
+             return result
+
         auth_code = None
         ali_output = ""
         
