@@ -11,7 +11,8 @@ subprocess.Popen = partial(subprocess.Popen, encoding='utf-8', errors='ignore')
 import requests
 import execjs
 
-from Utils import MatchArgs, pwdEncrypt
+# 去掉了 pwdEncrypt 引用，因为不再需要加密密码
+from Utils import MatchArgs
 
 # ==============================================================================
 # 修复：注释掉导致报错的代理获取代码
@@ -227,6 +228,8 @@ class AliV3:
         print('deviceToekn', deviceToekn)
         print('_data', _data)
 
+        import requests
+
         cookies = {
             'device_id': 'c7d0a5f4b554477fae0e1ba29f84fb63',
             'HWWAFSESID': 'bcd7d8b4f625fb57ac',
@@ -272,22 +275,19 @@ class AliV3:
             json=json_data
         )
 
-        print("响应状态码:", response.status_code)
-        print("响应内容:", response.text)
+        print(response.status_code)
+        print(response.text)
         
         try:
             self.captchaTicket = response.json()['data']['captchaTicket']
-            print(f"成功获取captchaTicket: {self.captchaTicket}")
         except Exception as e:
             print("Failed to get captchaTicket:", e)
-            
-        return self.captchaTicket
 
     def test(self):
         pass
 
     def main(self, username, password):
-        # 保存参数到实例变量
+        # 保存参数到实例变量（保留以支持 Sumbit_All 中的重试逻辑）
         self.username = username
         self.password = password
 
@@ -298,9 +298,11 @@ class AliV3:
         self.GetLog2()
         self.GetLog3()
         
-        # 获取并返回 captchaTicket
-        captchaTicket = self.Sumbit_All()
-        return captchaTicket
+        res = self.Sumbit_All()
+        
+        # 移除了加密和登录请求逻辑
+        print("Captcha process completed. Ticket obtained:", self.captchaTicket)
+        return res
 
 
 if __name__ == '__main__':
@@ -310,8 +312,7 @@ if __name__ == '__main__':
     if len(sys.argv) >= 3:
         user_arg = sys.argv[1]
         pass_arg = sys.argv[2]
-        ticket = ali.main(user_arg, pass_arg)
-        print(f"最终获取的captchaTicket: {ticket}")
+        ali.main(user_arg, pass_arg)
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
