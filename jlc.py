@@ -11,6 +11,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.support.ui import WebDriverWait
@@ -617,12 +618,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
              result['oshwhub_status'] = '依赖缺失'
              return result
 
-        # =========================================================================
-        # 核心修改：先获取 captchaTicket，再打开浏览器
-        # 避免 "10220 长时间无操作" 错误
-        # =========================================================================
-
-        # 1. 调用 AliV3 获取 captchaTicket (耗时操作)
+        # 1. 调用 AliV3 获取 captchaTicket (耗时操作，先做这个)
         log(f"账号 {account_index} - 正在计算 captchaTicket...")
         captcha_ticket = None
         
@@ -667,20 +663,36 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             result['oshwhub_status'] = 'Ticket获取失败'
             return result
 
-        # 2. 打开登录页面 (Ticket就绪后立即打开，保证 Session 新鲜)
-        login_url = "https://passport.jlc.com/login?appId=JLC_OSHWHUB&redirectUrl=https%3A%2F%2Foshwhub.com%2Fsign_in&backCode=1"
+        # 2. 打开登录页面
+        # 移除 backCode=1 以尝试解决 10220 错误
+        login_url = "https://passport.jlc.com/login?appId=JLC_OSHWHUB&redirectUrl=https%3A%2F%2Foshwhub.com%2Fsign_in"
         log(f"账号 {account_index} - 打开登录页面...")
         driver.get(login_url)
         
-        # 等待页面 JS 加载 (SM2Utils)
+        # 3. 核心修复逻辑：刷新 + 等待 + 鼠标模拟
+        log(f"账号 {account_index} - ⏳ 正在执行环境重置 (Refresh & Wait)...")
+        time.sleep(2)  # 等待首次加载
+        driver.refresh() # 强制刷新以获取最新 Session
+        
+        # 等待页面加载完成
+        WebDriverWait(driver, 15).until(lambda d: d.execute_script("return typeof SM2Utils !== 'undefined'"))
+        
+        # 模拟鼠标移动，欺骗 WAF
         try:
-            WebDriverWait(driver, 15).until(lambda d: d.execute_script("return typeof SM2Utils !== 'undefined'"))
-            log(f"账号 {account_index} - 登录页环境加载完毕")
-        except Exception:
-            log(f"账号 {account_index} - ⚠ 警告: 页面加载缓慢或 SM2Utils 未加载")
+            body = driver.find_element(By.TAG_NAME, "body")
+            action = ActionChains(driver)
+            action.move_to_element(body).move_by_offset(10, 10).perform()
+            time.sleep(1)
+            action.move_by_offset(20, 20).perform()
+        except:
+            pass
+            
+        # 关键等待：给 JS 足够时间初始化 lsId 和指纹
+        log(f"账号 {account_index} - ⏳ 等待页面初始化 (3秒)...")
+        time.sleep(3) 
 
 
-        # 3. 在浏览器中执行加密和登录请求
+        # 4. 在浏览器中执行加密和登录请求
         log(f"账号 {account_index} - 正在浏览器中执行加密登录...")
         
         login_script = """
@@ -709,7 +721,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             fetch('https://passport.jlc.com/api/cas/login/with-password', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Referer': window.location.href // 显式添加 Referer
                 },
                 body: JSON.stringify(payload)
             })
@@ -730,7 +743,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             result['oshwhub_status'] = 'JS执行错误'
             return result
 
-        # 4. 处理登录返回结果
+        # 5. 处理登录返回结果
         if login_response and login_response.get('success'):
             auth_code = login_response.get('data', {}).get('authCode')
             if auth_code:
@@ -762,11 +775,11 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 result['oshwhub_status'] = '密码错误'
                 return result
             else:
-                log(f"账号 {account_index} - ❌ 登录接口返回失败: {login_response}")
+                                log(f"账号 {account_index} - ❌ 登录接口返回失败: {login_response}")
                 result['oshwhub_status'] = f'登录失败:{code}'
                 return result
 
-        # 3. 获取用户昵称 (后续流程不变)
+        # 3. 获取用户昵称
         time.sleep(2) 
         nickname = get_user_nickname_from_api(driver, account_index)
         if nickname:
