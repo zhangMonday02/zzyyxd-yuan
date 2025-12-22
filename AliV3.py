@@ -4,6 +4,7 @@ import random
 import subprocess
 import time
 import sys
+import textwrap  # 新增引用，用于处理缩进
 from functools import partial
 
 subprocess.Popen = partial(subprocess.Popen, encoding='utf-8', errors='ignore')
@@ -11,8 +12,7 @@ subprocess.Popen = partial(subprocess.Popen, encoding='utf-8', errors='ignore')
 import requests
 import execjs
 
-# 去掉了 pwdEncrypt 引用，因为不再需要加密密码
-from Utils import MatchArgs
+from Utils import MatchArgs, pwdEncrypt
 
 # ==============================================================================
 # 修复：注释掉导致报错的代理获取代码
@@ -230,28 +230,67 @@ class AliV3:
 
         import requests
 
-        cookies = {
-            'device_id': 'c7d0a5f4b554477fae0e1ba29f84fb63',
-            'HWWAFSESID': 'bcd7d8b4f625fb57ac',
-            'HWWAFSESTIME': '1766299533105',
-            'Qs_lvt_290854': '1766237893%2C1766299553',
-            'Qs_pv_290854': '2499244294467079700%2C852781256760664000',
-            '__sameSiteCheck__': '1',
-            '_c_WBKFRo': '03ctatXDH7wXL1GIRpFWI9AUfuGhSVMzyOf5q8oX',
-            '_nb_ioWEgULi': '',
-        }
+        # ======================================================================
+        # 修改开始：动态调用 getcookie.py 获取 cookies 和 headers
+        # ======================================================================
+        cookies = {}
+        headers = {}
+        
+        try:
+            print("正在调用 getcookie.py 获取动态 Cookies 和 Headers...")
+            # 调用同目录下的 getcookie.py
+            # 使用 sys.executable 确保使用相同的 Python 解释器
+            process = subprocess.Popen(
+                [sys.executable, 'getcookie.py'], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = process.communicate()
+            
+            if process.returncode == 0:
+                output_str = stdout
+                # 定位到 cookies = { 的位置，假设这是有效代码块的开始
+                start_marker = "cookies = {"
+                start_index = output_str.find(start_marker)
+                
+                if start_index != -1:
+                    # 提取后续的代码部分
+                    code_block = output_str[start_index:]
+                    
+                    # 处理缩进问题 (getcookie.py 输出带有缩进)
+                    # 使用 textwrap.dedent 去除公共缩进，确保 exec 能正确解析
+                    dedented_code = textwrap.dedent(code_block)
+                    
+                    # 在局部作用域中执行提取的代码
+                    local_scope = {}
+                    try:
+                        exec(dedented_code, {}, local_scope)
+                        cookies = local_scope.get('cookies', {})
+                        headers = local_scope.get('headers', {})
+                        print("成功获取动态 Cookies 和 Headers。")
+                    except Exception as parse_error:
+                        print(f"解析 getcookie.py 输出时出错: {parse_error}")
+                        # 如果 dedent 失败，尝试直接执行（容错）
+                        try:
+                            exec(code_block, {}, local_scope)
+                            cookies = local_scope.get('cookies', {})
+                            headers = local_scope.get('headers', {})
+                        except:
+                            pass
+                else:
+                    print("错误：在 getcookie.py 输出中未找到 'cookies = {' 标记。")
+            else:
+                print(f"getcookie.py 执行失败: {stderr}")
+        
+        except Exception as e:
+            print(f"动态获取 Cookies/Headers 发生异常: {e}")
 
-        headers = {
-            'accept': 'application/json, text/plain, */*',
-            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
-            'cache-control': 'no-cache, no-store, must-revalidate',
-            'content-type': 'application/json',
-            'origin': 'https://passport.jlc.com',
-            'referer': 'https://passport.jlc.com/window/login?appId=JLC_PORTAL_PC&redirectUrl=https%3A%2F%2Fwww.jlc.com%2F',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0',
-            'secretkey': '35616236663038352d643366382d343131662d396239622d366439643132653639373764',
-            'x-jlc-clientuuid': '445de653-7a24-4242-88dd-0878479726aa-1766237894098',
-        }
+        # 如果获取失败，cookies 和 headers 将为空，请求可能会失败
+        if not cookies or not headers:
+            print("警告：Cookies 或 Headers 为空，后续请求可能失败。")
+        # ======================================================================
+        # 修改结束
+        # ======================================================================
 
         captcha_verify_param = {
             "sceneId": "6mw4mrmg",
@@ -283,11 +322,66 @@ class AliV3:
         except Exception as e:
             print("Failed to get captchaTicket:", e)
 
+    def Login(self, username, password):
+        if not self.captchaTicket:
+            print("Skipping login: No captchaTicket acquired.")
+            return
+
+        import requests
+        cookies = {
+            'JSESSIONID': '',
+            'device_id': 'c7d0a5f4b554477fae0e1ba29f84fb63',
+            'HWWAFSESID': 'bcd7d8b4f625fb57ac',
+            'HWWAFSESTIME': '1766299533105',
+            'Qs_lvt_290854': '1766237893%2C1766299553',
+            'Qs_pv_290854': '2499244294467079700%2C852781256760664000',
+            '__sameSiteCheck__': '1',
+            '_c_WBKFRo': '03ctatXDH7wXL1GIRpFWI9AUfuGhSVMzyOf5q8oX',
+            '_nb_ioWEgULi': '',
+            'lsId': 'f3e9184bbb4f40539702a58ec91a587a',
+        }
+
+        headers = {
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
+            'cache-control': 'no-cache, no-store, must-revalidate',
+            'content-type': 'application/json',
+            'expires': '0',
+            'jsec-x-df': '04facb30801ada1e5ac7e8e29a7a14ed3ed9f4d8d0d634be4167f0c3b8e0acd770e9835306f7557c2266e5f09cc238b5f730a9ea894a339fea3f5d30c5a581b1713d1dcc2f120fd08b53bff1ddcd0a8586fbd67569e7b8131154bd30d94ffcf4b29f9817748f50924b77e74992fa36f41a4150ba174639da7edb1e62c1e7c96e57fef81696c58bda62ffdd0f91',
+            'origin': 'https://passport.jlc.com',
+            'pragma': 'no-cache',
+            'priority': 'u=1, i',
+            'referer': 'https://passport.jlc.com/window/login?appId=JLC_PORTAL_PC&redirectUrl=https%3A%2F%2Fwww.jlc.com%2F',
+            'sec-ch-ua': '"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'secretkey': '35616236663038352d643366382d343131662d396239622d366439643132653639373764',
+            'support-cookie-samesite': 'true',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0',
+            'x-jlc-clientinfo': 'eyJjbGllbnRUeXBlIjoiUEMtV0VCIiwib3NOYW1lIjoiV2luZG93cyIsIm9zVmVyc2lvbiI6IjEwIiwiYnJvd3Nlck5hbWUiOiJFZGdlIiwiYnJvd3NlclZlcnNpb24iOiIxNDMuMC4wLjAiLCJicm93c2VyRW5naW5lIjoiQmxpbmsiLCJicm93c2VyRW5naW5lVmVyc2lvbiI6IjE0My4wLjAuMCIsInNjcmVlbldpZHRoIjoxNzA3LCJzY3JlZW5IZWlnaHQiOjEwNjcsImRwciI6MS41LCJjb2xvckRlcHRoIjoyNCwicGl4ZWxEZXB0aCI6MjQsImdwdVZlbmRvciI6Ikdvb2dsZSBJbmMuIChOVklESUEpIiwiZ3B1UmVuZGVyZXIiOiJBTkdMRSAoTlZJRElBLCBOVklESUEgR2VGb3JjZSBSVFggNTA2MCBMYXB0b3AgR1BVICgweDAwMDAyRDU5KSBEaXJlY3QzRDExIHZzXzVfMCBwc181XzAsIEQzRDExKSIsImNwdUFyY2hpdGVjdHVyZSI6ImFtZDY0IiwiaGFyZHdhcmVDb25jdXJyZW5jeSI6MjQsImxhbmd1YWdlIjoiemgtQ04iLCJ0aW1lWm9uZSI6IkFzaWEvU2hhbmdoYWkiLCJ0aW1lem9uZU9mZnNldCI6LTQ4MCwibmV0VHlwZSI6IjRnIn0=',
+            'x-jlc-clientuuid': '445de653-7a24-4242-88dd-0878479726aa-1766237894098',
+        }
+
+        json_data = {
+            'username': username,
+            'password': password,
+            'isAutoLogin': True,
+            'captchaTicket': self.captchaTicket,
+        }
+
+        response = requests.post('https://passport.jlc.com/api/cas/login/with-password', cookies=cookies,
+                                 headers=headers, json=json_data)
+
+        print(response.text)
+
     def test(self):
         pass
 
     def main(self, username, password):
-        # 保存参数到实例变量（保留以支持 Sumbit_All 中的重试逻辑）
+        # 保存参数到实例变量
         self.username = username
         self.password = password
 
@@ -300,8 +394,10 @@ class AliV3:
         
         res = self.Sumbit_All()
         
-        # 移除了加密和登录请求逻辑
-        print("Captcha process completed. Ticket obtained:", self.captchaTicket)
+        # 传递加密后的账号密码进行登录
+        enc_username = pwdEncrypt(username)
+        enc_password = pwdEncrypt(password)
+        self.Login(enc_username, enc_password)
         return res
 
 
