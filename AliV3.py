@@ -308,7 +308,7 @@ class AliV3:
             stdout, stderr = process.communicate()
             
             if process.returncode == 0:
-                output_str = stdout.decode('utf-8')  # 确保解码
+                output_str = stdout  # 由于 Popen 有 encoding='utf-8'，stdout 已为 str
                 # 定位到 cookies = { 的位置，假设这是有效代码块的开始
                 start_marker = "cookies = {"
                 start_index = output_str.find(start_marker)
@@ -340,7 +340,7 @@ class AliV3:
                 else:
                     print("错误：在 getcookie.py 输出中未找到 'cookies = {' 标记。")
             else:
-                print(f"getcookie.py 执行失败: {stderr.decode('utf-8')}")
+                print(f"getcookie.py 执行失败: {stderr}")
         
         except Exception as e:
             print(f"动态获取 Cookies/Headers 发生异常: {e}")
