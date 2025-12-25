@@ -276,6 +276,10 @@ class AliV3:
         )
 
         print(response.status_code)
+        
+        # 新增：输出请求主体
+        print('Request Body:', json.dumps(json_data, indent=4, ensure_ascii=False))
+        
         print(response.text)
         
         try:
