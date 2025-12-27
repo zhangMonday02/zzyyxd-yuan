@@ -283,7 +283,7 @@ class AliV3:
     def get_cached_cookies_headers(self):
         """
         获取Cookies和Headers。
-        检查本地缓存，如果存在且未过期（20分钟），则直接使用。
+        检查本地缓存，如果存在且未过期（9分钟），则直接使用。
         否则运行 getcookie.py 获取并更新缓存。
         """
         need_refresh = True
@@ -298,9 +298,9 @@ class AliV3:
                 last_time = cached_data.get('timestamp', 0)
                 current_time = time.time()
                 
-                # 检查时间差是否小于 20 分钟 (1200秒)
-                if current_time - last_time < 20 * 60:
-                    print("缓存有效 (小于20分钟)，使用缓存的 Cookies 和 Headers。")
+                # 检查时间差是否小于 9 分钟
+                if current_time - last_time < 9 * 60:
+                    print("缓存有效 (小于9分钟)，使用缓存的 Cookies 和 Headers。")
                     return cached_data.get('cookies'), cached_data.get('headers')
                 else:
                     print(f"缓存已过期 (上次更新: {time.ctime(last_time)})，重新获取...")
@@ -433,3 +433,4 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
+
