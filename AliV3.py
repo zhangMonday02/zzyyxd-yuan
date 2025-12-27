@@ -30,10 +30,13 @@ class AliV3:
         self.sign_key2 = "fpOKzILEajkqgSpr9VvU98FwAgIRcX"
         self.author = '古月'
         
-        # 初始化账号密码变量，用于在 Sumbit_All 中重试时调用
         self.username = None
         self.password = None
-        self.cache_file = "cookie_cache.json" # 缓存文件名
+
+        # --- 修改点1：使用绝对路径，确保文件存取位置一致 ---
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.cache_file = os.path.join(self.script_dir, "cookie_cache.json")
+        # ------------------------------------------------
 
         self.headers = {
             'Accept': '*/*',
@@ -116,7 +119,6 @@ class AliV3:
         filename = f'fenlin_temp_{self.CertifyId}.js'
         filepath = os.path.join('./temp', filename)
 
-        # 确保temp目录存在
         if not os.path.exists('./temp'):
             os.makedirs('./temp')
 
@@ -197,7 +199,6 @@ class AliV3:
         args = MatchArgs(self.StaticPath)
         if args is None:
             print('StaticPath not found')
-            # 重试逻辑：使用保存的 self.username 和 self.password
             if self.username and self.password:
                 print("Retry executing main...")
                 self.main(self.username, self.password)
@@ -260,10 +261,7 @@ class AliV3:
         )
 
         print(response.status_code)
-        
-        # 输出请求主体
         print('Request Body:', json.dumps(json_data, indent=4, ensure_ascii=False))
-        
         print(response.text)
         
         try:
@@ -273,7 +271,7 @@ class AliV3:
 
     def fetch_new_cookies(self):
         """执行脚本获取新的 cookies 和 headers，并保存到缓存文件"""
-        print("正在调用 getcookie.py 获取动态 Cookies 和 Headers...")
+        print("正在调用 getcookie.py 获取动态 Cookies 和 Headers...", flush=True)
         cookies = None
         headers = None
         
@@ -299,25 +297,31 @@ class AliV3:
                         exec(dedented_code, {}, local_scope)
                         cookies = local_scope.get('cookies')
                         headers = local_scope.get('headers')
-                        print("成功获取动态 Cookies 和 Headers。")
+                        print("成功获取动态 Cookies 和 Headers。", flush=True)
                         
-                        # 保存到缓存文件
+                        # --- 修改点2：增加保存时的调试信息，确保写入成功 ---
                         if cookies and headers:
+                            print(f"DEBUG: 准备写入缓存文件: {self.cache_file}", flush=True)
                             cache_data = {
                                 "timestamp": time.time(),
                                 "cookies": cookies,
                                 "headers": headers
                             }
-                            # ===================== 修改开始：获取并打印绝对路径 =====================
-                            abs_cache_path = os.path.abspath(self.cache_file)
-                            with open(self.cache_file, "w", encoding="utf-8") as f:
-                                json.dump(cache_data, f, ensure_ascii=False, indent=4)
-                            print(f"数据已保存到缓存文件地址: {abs_cache_path}")
-                            # ===================== 修改结束 =======================================
-                            
+                            try:
+                                with open(self.cache_file, "w", encoding="utf-8") as f:
+                                    json.dump(cache_data, f, ensure_ascii=False, indent=4)
+                                # 确保操作系统真正写入磁盘
+                                f.flush()
+                                os.fsync(f.fileno()) 
+                                print(f"SUCCESS: 数据已成功保存到 {self.cache_file}", flush=True)
+                            except Exception as save_err:
+                                print(f"ERROR: 保存缓存文件失败: {save_err}", flush=True)
+                        else:
+                            print(f"WARNING: 获取到的 cookies 或 headers 为空，无法保存。", flush=True)
+                        # ------------------------------------------------
+
                     except Exception as parse_error:
-                        print(f"解析 getcookie.py 输出时出错: {parse_error}")
-                        # 备用尝试
+                        print(f"解析 getcookie.py 输出时出错: {parse_error}", flush=True)
                         try:
                             exec(code_block, {}, local_scope)
                             cookies = local_scope.get('cookies')
@@ -325,11 +329,11 @@ class AliV3:
                         except:
                             pass
                 else:
-                    print("错误：在 getcookie.py 输出中未找到 'cookies = {' 标记。")
+                    print("错误：在 getcookie.py 输出中未找到 'cookies = {' 标记。", flush=True)
             else:
-                print(f"getcookie.py 执行失败: {stderr}")
+                print(f"getcookie.py 执行失败: {stderr}", flush=True)
         except Exception as e:
-            print(f"执行 getcookie.py 发生异常: {e}")
+            print(f"执行 getcookie.py 发生异常: {e}", flush=True)
             
         return cookies, headers
 
@@ -341,27 +345,26 @@ class AliV3:
         cookies = None
         headers = None
         
-        abs_cache_path = os.path.abspath(self.cache_file)
         if os.path.exists(self.cache_file):
-            print(f"发现缓存文件，正在从以下地址读取: {abs_cache_path}")
             try:
+                print(f"发现缓存文件: {self.cache_file}，尝试读取...", flush=True)
                 with open(self.cache_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     saved_time = data.get("timestamp", 0)
                     
                     # 检查是否在15分钟内 (15 * 60 = 900秒)
                     if now - saved_time < 900:
-                        print("缓存有效，使用缓存的 Cookies 和 Headers。")
+                        print("缓存有效，直接使用缓存的 Cookies 和 Headers。", flush=True)
                         cookies = data.get("cookies")
                         headers = data.get("headers")
                         if cookies and headers:
                             need_refresh = False
                     else:
-                        print("缓存已过期（超过15分钟）。")
+                        print("缓存已过期（超过15分钟）。", flush=True)
             except Exception as e:
-                print(f"读取缓存文件出错: {e}")
+                print(f"读取缓存文件出错: {e}", flush=True)
         else:
-            print(f"缓存文件不存在 (路径: {abs_cache_path})，准备新建。")
+            print(f"缓存文件不存在 (路径: {self.cache_file})，准备新建。", flush=True)
 
         if need_refresh:
             cookies, headers = self.fetch_new_cookies()
@@ -373,17 +376,16 @@ class AliV3:
             print("Skipping login: No captchaTicket acquired.")
             return
 
-        # 使用带缓存的获取方法
         cookies, headers = self.get_cookies_and_headers()
 
         if cookies is None or headers is None:
-            print("错误：未能获取到 Cookies 或 Headers (值为 None)，退出程序。")
+            print("错误：未能获取到 Cookies 或 Headers (值为 None)，退出程序。", flush=True)
             sys.exit(1)
 
         json_data = {
             'username': username,
             'password': password,
-            'isAutoLogin': False,
+            'isAutoLogin': True,
             'captchaTicket': self.captchaTicket,
         }
         
@@ -393,15 +395,10 @@ class AliV3:
 
         print(response.text)
 
-    def test(self):
-        pass
-
     def main(self, username, password):
-        # 保存参数到实例变量
         self.username = username
         self.password = password
 
-        # 使用 self 调用实例方法
         self.Req_Init()
         self.decrypt_DeviceConfig()
         self.GetDynamic_Key()
@@ -410,21 +407,16 @@ class AliV3:
         
         res = self.Sumbit_All()
         
-        # 传递加密后的账号密码进行登录
         enc_username = pwdEncrypt(username)
         enc_password = pwdEncrypt(password)
         self.Login(enc_username, enc_password)
         return res
 
-
 if __name__ == '__main__':
     ali = AliV3()
-    
-    # 检查命令行参数，如果有则使用，如果没有则提示
     if len(sys.argv) >= 3:
         user_arg = sys.argv[1]
         pass_arg = sys.argv[2]
         ali.main(user_arg, pass_arg)
     else:
         print("用法: python AliV3.py <username> <password>")
-        print("示例: python AliV3.py 13800138000 MyPassword123")
