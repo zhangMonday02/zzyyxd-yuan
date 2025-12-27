@@ -113,42 +113,6 @@ def extract_token_from_local_storage(driver):
     return None
 
 @with_retry
-def extract_token_from_devtools(driver):
-    """[新增] 使用 DevTools 从网络请求中提取 AccessToken (作为 LocalStorage 的备选)"""
-    token = None
-    try:
-        logs = driver.get_log('performance')
-        
-        for entry in logs:
-            try:
-                message = json.loads(entry['message'])
-                message_type = message.get('message', {}).get('method', '')
-                
-                if message_type == 'Network.requestWillBeSent':
-                    request = message.get('message', {}).get('params', {}).get('request', {})
-                    url = request.get('url', '')
-                    
-                    if 'm.jlc.com' in url:
-                        headers = request.get('headers', {})
-                        # 尝试多种可能的 Key
-                        token = (
-                            headers.get('x-jlc-accesstoken') or 
-                            headers.get('X-JLC-AccessToken') or
-                            headers.get('X-Jlc-Accesstoken') or
-                            headers.get('token')
-                        )
-                        
-                        if token:
-                            log(f"✅ 从网络请求中补救提取到 token: {token[:30]}...")
-                            return token
-            except:
-                continue
-    except Exception as e:
-        log(f"❌ DevTools 提取 token 出错: {e}")
-    
-    return token
-
-@with_retry
 def extract_secretkey_from_devtools(driver):
     """使用 DevTools 从网络请求中提取 secretkey"""
     secretkey = None
@@ -807,16 +771,19 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             log(f"账号 {account_index} - 正在携带 authCode 访问 m.jlc.com 个人中心...")
             driver.get(target_url)
             
-            # 等待页面加载
+            # 等待页面加载和Token写入
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-            time.sleep(random.randint(4, 6)) # 等待 token 写入
             
-            # 提取 Token (先试 LocalStorage，再试 DevTools)
+            log(f"账号 {account_index} - 等待 5 秒让页面处理登录逻辑...")
+            time.sleep(5) 
+            
+            log(f"账号 {account_index} - 刷新页面以确保 Token 加载...")
+            driver.refresh()
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            time.sleep(3) # 刷新后再等待一下
+            
+            # 提取 Token
             access_token = extract_token_from_local_storage(driver)
-            if not access_token:
-                 log("⚠ LocalStorage 未找到 token，尝试从网络请求提取...")
-                 access_token = extract_token_from_devtools(driver)
-
             secretkey = extract_secretkey_from_devtools(driver)
             
             result['token_extracted'] = bool(access_token)
