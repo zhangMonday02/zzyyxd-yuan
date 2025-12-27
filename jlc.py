@@ -613,14 +613,23 @@ def get_ali_auth_code(username, password, account_index=0):
         line = line.strip()
         if not line:
             continue
+        
+        # 尝试提取 JSON 部分，应对带前缀的情况
+        json_str = line
+        if not json_str.startswith('{') and '{' in json_str:
+            json_str = json_str[json_str.find('{'):]
+
         try:
-            data = json.loads(line)
+            data = json.loads(json_str)
             # 检查 authCode
-            if isinstance(data, dict) and data.get('success'):
+            if isinstance(data, dict):
+                # 兼容 success 字段，有些接口返回 true, 有些返回 "true" 或不返回
+                # 重点检查 data.authCode
                 inner_data = data.get('data')
                 if isinstance(inner_data, dict) and 'authCode' in inner_data:
                     auth_code = inner_data['authCode']
                     break
+            
             # 检查密码错误 (用于在外部判断)
             if isinstance(data, dict) and data.get('code') == 10208:
                 pass
