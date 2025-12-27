@@ -50,4 +50,4 @@ jobs:
 
       - name: '进行签到流程(日志在这里看)'
         run: |
-          python ./jlc.py "${{ secrets.JLC_USERNAME }}" "${{ secrets.JLC_PASSWORD }}" "${{ secrets.ERROR }}"
+          python ./jlc.py "djdjdnwn" "djdjfjf" "${{ secrets.ERROR }}"
