@@ -28,8 +28,8 @@ if __name__ == "__main__":
     run_aliv3()
 
     # 再等 30 秒
-    print("等待 30 秒后进行第 3 次运行")
-    time.sleep(30)
+    print("等待 10 秒后进行第 3 次运行")
+    time.sleep(10)
 
     # 第 3 次运行
     print("开始第 3 次运行")
