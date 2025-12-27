@@ -7,6 +7,7 @@ import sys
 import textwrap
 from functools import partial
 
+# 保持原有的 subprocess 修改
 subprocess.Popen = partial(subprocess.Popen, encoding='utf-8', errors='ignore')
 
 import requests
@@ -54,13 +55,17 @@ class AliV3:
         }
 
     def get_sign(self, params, key):
-        with open('sign.js', 'r', encoding='utf-8') as f:
+        file_path = 'sign.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
         return ctx.call('Sign', params, key)
 
     def getDeviceData(self, ):
-        with open('sign.js', 'r', encoding='utf-8') as f:
+        file_path = 'sign.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
         return ctx.call('getDeviceData')
@@ -86,7 +91,7 @@ class AliV3:
         response = requests.post('https://1tbpug.captcha-open.aliyuncs.com/', headers=self.headers, data=data,
                                  proxies=proxy)
 
-        print(response.text)
+        # print(response.text)
         self.DeviceConfig = response.json()['DeviceConfig']
         print('DeviceConfig', self.DeviceConfig)
         self.CertifyId = response.json()['CertifyId']
@@ -95,7 +100,9 @@ class AliV3:
         print('StaticPath', self.StaticPath)
 
     def decrypt_DeviceConfig(self):
-        with open('AliyunCaptcha.js', 'r', encoding='utf-8') as f:
+        file_path = 'AliyunCaptcha.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
         self.Real_Config = ctx.call('getDeviceConfig', self.DeviceConfig)
@@ -104,10 +111,13 @@ class AliV3:
 
     def GetDynamic_Key(self):
         self.fenlin = 'https://g.alicdn.com/captcha-frontend/FeiLin/' + self.fenlin_path
-        print(self.fenlin)
+        print(f"Requesting FenLin: {self.fenlin}")
 
         fenlin_js = requests.get(self.fenlin).text
-        with open('fenlin.js', 'r', encoding='utf-8') as f:
+        
+        file_path = 'fenlin.js'
+        print(f"--> [读取文件] 正在加载模版文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
 
         jscode = js.replace('#jscode#', fenlin_js)
@@ -118,11 +128,14 @@ class AliV3:
 
         # 确保temp目录存在
         if not os.path.exists('./temp'):
+            print(f"--> [系统操作] 创建目录: {os.path.abspath('./temp')}")
             os.makedirs('./temp')
 
+        print(f"--> [写入文件] 正在保存临时 JS: {os.path.abspath(filepath)}")
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(jscode)
 
+        print(f"--> [执行命令] Node 执行文件: {os.path.abspath(filepath)}")
         result = subprocess.run(
             ["node", filepath],
             capture_output=True,
@@ -140,24 +153,33 @@ class AliV3:
             'Format': 'JSON',
             'Action': 'Log2',
         }
-        with open('Log2_Data.js', 'r', encoding='utf-8') as f:
+        
+        file_path = 'Log2_Data.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
 
         env_folder = 'env'
+        # 增加目录存在检查
+        if not os.path.exists(env_folder):
+             print(f"Error: env 文件夹不存在: {os.path.abspath(env_folder)}")
+             return
+
         json_files = [f for f in os.listdir(env_folder) if f.endswith('.json')]
         random_json_file = random.choice(json_files)
         json_file_path = os.path.join(env_folder, random_json_file)
 
+        print(f"--> [读取文件] 正在读取环境配置: {os.path.abspath(json_file_path)}")
         with open(json_file_path, 'r', encoding='utf-8') as f:
             env_data = json.load(f)
 
         print(f'随机选择的环境文件: {random_json_file}')
         data = ctx.call('getLog2Data', data, self.Dynamic_Key, self.Real_Config, env_data)
-        print(data)
+        # print(data)
         response = requests.post('https://cloudauth-device-dualstack.cn-shanghai.aliyuncs.com/', headers=self.headers,
                                  data=data, proxies=proxy)
-        print(response.text)
+        print(f"Log2 Response: {response.text}")
 
     def GetLog3(self):
         data = {
@@ -168,29 +190,36 @@ class AliV3:
             'Format': 'JSON',
             'Action': 'Log3',
         }
-        with open('Log3_Data.js', 'r', encoding='utf-8') as f:
+        
+        file_path = 'Log3_Data.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
         data = ctx.call('getLog3Data', data, self.Real_Config)
-        print(data)
+        # print(data)
 
         response = requests.post('https://cloudauth-device-dualstack.cn-shanghai.aliyuncs.com/', headers=self.headers,
                                  data=data, proxies=proxy)
-        print(response.text)
+        print(f"Log3 Response: {response.text}")
 
     def GetDeviceData(self):
-        with open('deviceToken.js', 'r', encoding='utf-8') as f:
+        file_path = 'deviceToken.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
         DeviceToken = ctx.call('getDeviceToken', self.Real_Config, self.Dynamic_Key)
         return DeviceToken
 
     def getData(self, args):
-        with open('data.js', 'r', encoding='utf-8') as f:
+        file_path = 'data.js'
+        print(f"--> [读取文件] 正在加载 JS 文件: {os.path.abspath(file_path)}")
+        with open(file_path, 'r', encoding='utf-8') as f:
             js = f.read()
         ctx = execjs.compile(js)
         data = ctx.call('getData', args, self.CertifyId)
-        print(data)
+        # print(data)
         return data
 
     def Sumbit_All(self):
@@ -209,11 +238,11 @@ class AliV3:
         _data = self.getData(args)
         deviceToekn = self.GetDeviceData()
 
-        print('deviceToekn', deviceToekn)
-        print('_data', _data)
+        # print('deviceToekn', deviceToekn)
+        # print('_data', _data)
 
-        import requests
-
+        # 这里不需要再次 import requests，已经在顶部导入
+        
         cookies = {
             'device_id': 'c7d0a5f4b554477fae0e1ba29f84fb63',
             'HWWAFSESID': 'bcd7d8b4f625fb57ac',
@@ -259,10 +288,10 @@ class AliV3:
             json=json_data
         )
 
-        print(response.status_code)
+        print(f"Submit Status Code: {response.status_code}")
         
         # 输出请求主体
-        print('Request Body:', json.dumps(json_data, indent=4, ensure_ascii=False))
+        # print('Request Body:', json.dumps(json_data, indent=4, ensure_ascii=False))
         
         print(response.text)
         
@@ -273,7 +302,7 @@ class AliV3:
 
     def fetch_new_cookies(self):
         """执行脚本获取新的 cookies 和 headers，并保存到缓存文件"""
-        print("正在调用 getcookie.py 获取动态 Cookies 和 Headers...")
+        print(f"--> [执行脚本] 正在调用 getcookie.py: {os.path.abspath('getcookie.py')}")
         cookies = None
         headers = None
         
@@ -308,9 +337,9 @@ class AliV3:
                                 "cookies": cookies,
                                 "headers": headers
                             }
+                            print(f"--> [写入文件] 保存 Cookie 缓存: {os.path.abspath(self.cache_file)}")
                             with open(self.cache_file, "w", encoding="utf-8") as f:
                                 json.dump(cache_data, f, ensure_ascii=False, indent=4)
-                            print(f"数据已保存到 {self.cache_file}")
                             
                     except Exception as parse_error:
                         print(f"解析 getcookie.py 输出时出错: {parse_error}")
@@ -340,6 +369,7 @@ class AliV3:
         
         if os.path.exists(self.cache_file):
             try:
+                print(f"--> [读取文件] 读取 Cookie 缓存: {os.path.abspath(self.cache_file)}")
                 with open(self.cache_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     saved_time = data.get("timestamp", 0)
@@ -378,15 +408,14 @@ class AliV3:
         json_data = {
             'username': username,
             'password': password,
-            'isAutoLogin': false,
+            'isAutoLogin': False,
             'captchaTicket': self.captchaTicket,
         }
         
-        import requests
         response = requests.post('https://passport.jlc.com/api/cas/login/with-password', cookies=cookies,
                                  headers=headers, json=json_data)
 
-        print(response.text)
+        print(f"Login Response: {response.text}")
 
     def test(self):
         pass
@@ -423,4 +452,3 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
-
