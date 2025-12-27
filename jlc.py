@@ -7,6 +7,7 @@ import random
 import requests
 import io
 import platform
+import threading
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -535,20 +536,48 @@ def get_user_nickname_from_api(driver, account_index):
         log(f"账号 {account_index} - ⚠ 获取用户昵称失败: {e}")
         return None
 
+def run_aliv3_with_timeout(username, password, timeout=60):
+    """
+    在子线程中运行 AliV3，带超时控制，防止卡死
+    """
+    result_container = {"output": "", "finished": False}
+    f = io.StringIO()
+
+    def target():
+        with redirect_stdout(f):
+            try:
+                if AliV3:
+                    ali = AliV3()
+                    ali.main(username=username, password=password)
+            except Exception as e:
+                print(f"Error executing AliV3: {e}")
+        result_container["finished"] = True
+
+    t = threading.Thread(target=target)
+    t.daemon = True # 设置为守护线程，确保主程序退出时线程也会结束
+    t.start()
+    t.join(timeout)  # 等待 timeout 秒
+
+    result_container["output"] = f.getvalue()
+    if not result_container["finished"]:
+        return result_container["output"], True  # (output, is_timeout)
+    return result_container["output"], False
+
 def get_ali_auth_code(username, password):
     """调用 AliV3 获取 authCode"""
     if AliV3 is None:
         return None
     
-    f = io.StringIO()
-    with redirect_stdout(f):
-        try:
-            ali = AliV3()
-            ali.main(username=username, password=password)
-        except Exception as e:
-            pass
+    # 使用带超时的调用
+    ali_output, is_timeout = run_aliv3_with_timeout(username, password, timeout=60)
     
-    ali_output = f.getvalue()
+    if is_timeout:
+        print(f"AliV3 timeout in get_ali_auth_code. Logs:\n{ali_output}")
+        return None
+
+    if not ali_output:
+        return None
+
     auth_code = None
     
     for line in ali_output.split('\n'):
@@ -628,19 +657,15 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
              return result
 
         auth_code = None
-        ali_output = ""
         
-        # 捕获 stdout
-        f = io.StringIO()
-        with redirect_stdout(f):
-            try:
-                # 实例化并运行
-                ali = AliV3()
-                ali.main(username=username, password=password)
-            except Exception as e:
-                print(f"Error executing AliV3: {e}")
+        # 使用带超时的调用
+        ali_output, is_timeout = run_aliv3_with_timeout(username, password, timeout=60)
         
-        ali_output = f.getvalue()
+        if is_timeout:
+            log(f"账号 {account_index} - ❌ 登录依赖(AliV3) 响应超时(>60s)，跳过此账号")
+            log(f"AliV3 部分日志:\n{ali_output}")
+            result['oshwhub_status'] = '登录超时'
+            return result # 返回失败，触发外部重试
         
         # 解析输出
         lines = ali_output.split('\n')
