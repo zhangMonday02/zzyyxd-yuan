@@ -87,6 +87,153 @@ def with_retry(func, max_retries=5, delay=1):
         return None
     return wrapper
 
+def get_authcode_from_aliv3(username, password, account_index):
+    """调用 AliV3 获取 authCode"""
+    if AliV3 is None:
+        return None, "依赖缺失", False
+        
+    auth_code = None
+    ali_output = ""
+    password_error = False
+    
+    # 捕获 stdout
+    f = io.StringIO()
+    with redirect_stdout(f):
+        try:
+            # 实例化并运行
+            ali = AliV3()
+            ali.main(username=username, password=password)
+        except Exception as e:
+            print(f"Error executing AliV3: {e}")
+    
+    ali_output = f.getvalue()
+    
+    # 解析输出
+    lines = ali_output.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            
+            # 检查是否包含 authCode
+            if isinstance(data, dict) and data.get('success'):
+                inner_data = data.get('data')
+                if isinstance(inner_data, dict) and 'authCode' in inner_data:
+                    auth_code = inner_data['authCode']
+            
+            # 检查是否包含错误码 10208
+            if isinstance(data, dict) and data.get('code') == 10208:
+                msg = data.get('message', '账号或密码不正确')
+                return None, msg, True
+                
+        except json.JSONDecodeError:
+            continue
+            
+    if auth_code:
+        return auth_code, "获取成功", False
+    else:
+        return None, ali_output, False
+
+def login_m_jlc_by_code(auth_code, account_index):
+    """通过 authCode 调用接口获取 Token"""
+    url = "https://m.jlc.com/api/login/login-by-code"
+    boundary = "wxmpFormBoundaryzCuEL8F0qUwy8uHR6"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Content-Type': f'multipart/form-data; boundary={boundary}',
+        'Origin': 'https://m.jlc.com',
+        'Referer': 'https://m.jlc.com/'
+    }
+    
+    # 手动构建 multipart/form-data body
+    payload = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="code"\r\n\r\n'
+        f"{auth_code}\r\n"
+        f"--{boundary}--"
+    )
+    
+    try:
+        log(f"账号 {account_index} - 正在调用 login-by-code 接口换取 Token...")
+        response = requests.post(url, data=payload, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            # 尝试从响应头获取 Token
+            token = response.headers.get('x-jlc-accesstoken') or \
+                    response.headers.get('X-JLC-AccessToken')
+            
+            if token:
+                log(f"✅ 接口登录成功，提取到 Token: {token[:30]}...")
+                return token
+            else:
+                log(f"❌ 接口请求成功但未发现 Token 头。响应头: {response.headers}")
+        else:
+            log(f"❌ 接口请求失败，状态码: {response.status_code}")
+            log(f"❌ 响应内容: {response.text[:200]}")
+            
+    except Exception as e:
+        log(f"❌ 调用登录接口异常: {e}")
+        
+    return None
+
+@with_retry
+def extract_secretkey_from_devtools(driver):
+    """使用 DevTools 从网络请求中提取 secretkey"""
+    secretkey = None
+    
+    try:
+        logs = driver.get_log('performance')
+        
+        for entry in logs:
+            try:
+                message = json.loads(entry['message'])
+                message_type = message.get('message', {}).get('method', '')
+                
+                if message_type == 'Network.requestWillBeSent':
+                    request = message.get('message', {}).get('params', {}).get('request', {})
+                    url = request.get('url', '')
+                    
+                    if 'm.jlc.com' in url:
+                        headers = request.get('headers', {})
+                        secretkey = (
+                            headers.get('secretkey') or 
+                            headers.get('SecretKey') or
+                            headers.get('secretKey') or
+                            headers.get('SECRETKEY')
+                        )
+                        
+                        if secretkey:
+                            log(f"✅ 从请求中提取到 secretkey: {secretkey[:20]}...")
+                            return secretkey
+                
+                elif message_type == 'Network.responseReceived':
+                    response = message.get('message', {}).get('params', {}).get('response', {})
+                    url = response.get('url', '')
+                    
+                    if 'm.jlc.com' in url:
+                        headers = response.get('requestHeaders', {})
+                        secretkey = (
+                            headers.get('secretkey') or 
+                            headers.get('SecretKey') or
+                            headers.get('secretKey') or
+                            headers.get('SECRETKEY')
+                        )
+                        
+                        if secretkey:
+                            log(f"✅ 从响应中提取到 secretkey: {secretkey[:20]}...")
+                            return secretkey
+                            
+            except:
+                continue
+                
+    except Exception as e:
+        log(f"❌ DevTools 提取 secretkey 出错: {e}")
+    
+    return secretkey
+
 def get_oshwhub_points(driver, account_index):
     """获取开源平台积分数量"""
     max_retries = 5
@@ -180,22 +327,14 @@ class JLCClient:
     def get_points(self):
         """获取金豆数量"""
         url = f"{self.base_url}/api/activity/front/getCustomerIntegral"
-        max_retries = 5
+        max_retries = 3 # 降低重试次数，因为不再使用复杂的页面刷新逻辑
         for attempt in range(max_retries):
             data = self.send_request(url)
             
             if data and data.get('success'):
                 jindou_count = data.get('data', {}).get('integralVoucher', 0)
                 return jindou_count
-            
-            # 重试前刷新页面
-            if attempt < max_retries - 1:
-                try:
-                    self.driver.refresh()
-                    WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                    time.sleep(1 + random.uniform(0, 1))
-                except:
-                    pass  # 静默继续
+            time.sleep(1)
         
         log(f"账号 {self.account_index} - ❌ 获取金豆数量失败")
         return 0
@@ -438,272 +577,6 @@ def get_user_nickname_from_api(driver, account_index):
         log(f"账号 {account_index} - ⚠ 获取用户昵称失败: {e}")
         return None
 
-def get_auth_code_from_aliv3(username, password, account_index):
-    """调用 AliV3 获取 authCode"""
-    log(f"账号 {account_index} - 正在调用 登录(AliV3) 脚本获取 authCode...")
-    
-    if AliV3 is None:
-        log(f"账号 {account_index} - ❌ 登录依赖未正确加载")
-        return None, False, "依赖缺失"
-
-    auth_code = None
-    ali_output = ""
-    password_error = False
-    error_msg = ""
-    
-    # 捕获 stdout
-    f = io.StringIO()
-    with redirect_stdout(f):
-        try:
-            # 实例化并运行
-            ali = AliV3()
-            ali.main(username=username, password=password)
-        except Exception as e:
-            print(f"Error executing AliV3: {e}")
-    
-    ali_output = f.getvalue()
-    
-    # 解析输出
-    lines = ali_output.split('\n')
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-            
-            # 检查是否包含 authCode
-            if isinstance(data, dict) and data.get('success'):
-                inner_data = data.get('data')
-                if isinstance(inner_data, dict) and 'authCode' in inner_data:
-                    auth_code = inner_data['authCode']
-                    log(f"账号 {account_index} - ✅ 成功获取 authCode: {auth_code}")
-            
-            # 检查是否包含错误码 10208
-            if isinstance(data, dict) and data.get('code') == 10208:
-                msg = data.get('message', '账号或密码不正确')
-                log(f"账号 {account_index} - ❌ 检测到账号或密码错误 ({msg})")
-                password_error = True
-                error_msg = msg
-                return None, True, error_msg
-                
-        except json.JSONDecodeError:
-            continue
-    
-    if not auth_code and not password_error:
-        log("❌ 登录脚本未返回 authCode，输出内容：")
-        log(ali_output)
-        
-    return auth_code, password_error, error_msg
-
-# ==========================================
-# 提取凭证的核心函数 (Token & SecretKey)
-# ==========================================
-
-def extract_token_from_local(driver):
-    """仅从 localStorage 尝试提取 token"""
-    try:
-        token = driver.execute_script("return window.localStorage.getItem('X-JLC-AccessToken');")
-        if token and token != "NONE" and len(token) > 5:
-            return token
-    except:
-        pass
-    return None
-
-def parse_logs_for_debug(driver, logs, account_index):
-    """
-    调试模式：详细打印网络请求信息，并同时尝试提取 Token
-    """
-    token = None
-    secret = None
-    
-    log(f"---- 🛠️ 账号 {account_index} 调试：网络日志分析 (Total: {len(logs)}) ----")
-    
-    for entry in logs:
-        try:
-            message = json.loads(entry['message'])
-            method = message.get('message', {}).get('method', '')
-            params = message.get('message', {}).get('params', {})
-            
-            # 请求信息
-            if method == 'Network.requestWillBeSent':
-                req_url = params.get('request', {}).get('url', '')
-                # 只打印相关域名的请求，避免日志爆炸
-                if 'jlc.com' in req_url or 'oshwhub.com' in req_url:
-                    headers = params.get('request', {}).get('headers', {})
-                    post_data = params.get('request', {}).get('postData', 'N/A')
-                    
-                    log(f"➡️ [REQ] {req_url}")
-                    log(f"   Headers: {json.dumps(headers, ensure_ascii=False)}")
-                    if post_data != 'N/A':
-                        log(f"   Body: {post_data[:500]}...") # 截断打印
-                    
-                    # 检查请求头中的 Token
-                    for k, v in headers.items():
-                        if k.lower() == 'x-jlc-accesstoken' and v and v != "NONE" and len(v)>5:
-                            token = v
-                            log(f"   ✅ Found Token in Req Headers: {token[:10]}...")
-                        if k.lower() == 'secretkey' and v and len(v)>5:
-                            secret = v
-                            log(f"   ✅ Found SecretKey in Req Headers: {secret[:10]}...")
-
-            # 响应信息
-            elif method == 'Network.responseReceived':
-                resp_url = params.get('response', {}).get('url', '')
-                if 'jlc.com' in resp_url or 'oshwhub.com' in resp_url:
-                    status = params.get('response', {}).get('status', 0)
-                    headers = params.get('response', {}).get('requestHeaders', {}) # 注意这里通常是 requestHeaders
-                    # 获取响应内容需要 extra CDP command，这里只打印状态
-                    log(f"⬅️ [RESP] {status} {resp_url}")
-                    
-                    # 尝试获取响应体 (仅对少量关键接口尝试，防止阻塞)
-                    if "getCustomerIntegral" in resp_url or "selectPersonalInfo" in resp_url:
-                        request_id = params.get('requestId')
-                        try:
-                            body_resp = driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': request_id})
-                            log(f"   Response Body: {body_resp.get('body', '')[:500]}...")
-                        except:
-                            log(f"   (Failed to get Response Body)")
-
-                    # 检查响应对应的请求头中的 Token (有时 Network.responseReceived 包含 requestHeaders)
-                    if headers:
-                        for k, v in headers.items():
-                            if k.lower() == 'x-jlc-accesstoken' and v and v != "NONE" and len(v)>5:
-                                token = v
-                            if k.lower() == 'secretkey' and v and len(v)>5:
-                                secret = v
-        except Exception as e:
-            continue
-    
-    log(f"---- 🛠️ 账号 {account_index} 调试结束 ----")
-    return token, secret
-
-def perform_deep_debug(driver, account_index):
-    """
-    执行深度调试：输出 HTML, LocalStorage 和 详细网络日志
-    同时返回从日志中发现的 token/secret 以防丢失
-    """
-    log(f"---- 🛠️ 账号 {account_index} 深度调试开始 (10s snapshot) ----")
-    
-    # 1. HTML Snapshot
-    try:
-        html = driver.page_source
-        title = driver.title
-        url = driver.current_url
-        log(f"📄 页面标题: {title}")
-        log(f"🔗 当前URL: {url}")
-        log(f"📝 HTML摘要 (前1000字): {html[:1000]}...")
-        if "passport" in url or "login" in url:
-            log("⚠ 警告：当前似乎在登录页，可能已重定向退出！")
-    except Exception as e:
-        log(f"❌ 获取HTML失败: {e}")
-
-    # 2. LocalStorage Snapshot
-    try:
-        ls = driver.execute_script("return window.localStorage;")
-        log(f"📦 LocalStorage 全部内容: {json.dumps(ls, ensure_ascii=False)}")
-        if 'X-JLC-AccessToken' in ls:
-            log(f"   ✅ LocalStorage 中存在 X-JLC-AccessToken: {ls['X-JLC-AccessToken'][:20]}...")
-        else:
-            log(f"   ❌ LocalStorage 中未找到 X-JLC-AccessToken")
-    except Exception as e:
-        log(f"❌ 获取LocalStorage失败: {e}")
-
-    # 3. Network Logs Dump & Analysis
-    token = None
-    secret = None
-    try:
-        logs = driver.get_log('performance') # 这会消费日志！
-        token, secret = parse_logs_for_debug(driver, logs, account_index)
-    except Exception as e:
-        log(f"❌ 获取网络日志失败: {e}")
-        
-    return token, secret
-
-def wait_for_credentials(driver, account_index, timeout=20):
-    """
-    等待并提取 Token 和 SecretKey
-    逻辑：循环检查，同时查看 localStorage 和 网络日志
-    同时监控 URL 变化，防重定向
-    """
-    start_time = time.time()
-    access_token = None
-    secretkey = None
-    last_url = driver.current_url
-    
-    log(f"账号 {account_index} - 当前URL: {last_url}")
-    
-    while time.time() - start_time < timeout:
-        # 0. 监控 URL
-        current_url = driver.current_url
-        if current_url != last_url:
-            log(f"账号 {account_index} - ⚠ URL发生变化: {current_url}")
-            last_url = current_url
-            
-            if "passport.jlc.com" in current_url or "/login" in current_url:
-                log(f"账号 {account_index} - ❌ 检测到重定向至登录页，AuthCode 可能失效")
-                return None, None
-        
-        # 1. 尝试从 localStorage 获取 token
-        if not access_token:
-            access_token = extract_token_from_local(driver)
-            if access_token:
-                 log(f"账号 {account_index} - ✅ 从 localStorage 提取到 Token")
-        
-        # 2. 读取网络日志 (累积式提取)
-        try:
-            logs = driver.get_log('performance')
-            # 使用简化的解析逻辑，非调试模式下不打印详情
-            t_net, s_net = parse_logs_for_credentials(logs) # 复用之前的简单解析函数
-            
-            if not access_token and t_net:
-                access_token = t_net
-                log(f"账号 {account_index} - ✅ 从网络日志提取到 Token")
-            
-            if not secretkey and s_net:
-                secretkey = s_net
-                log(f"账号 {account_index} - ✅ 从网络日志提取到 SecretKey")
-                
-        except Exception:
-            pass
-        
-        # 3. 检查是否都拿到了
-        if access_token and secretkey:
-            return access_token, secretkey
-        
-        time.sleep(1)
-        
-    return access_token, secretkey
-
-def parse_logs_for_credentials(logs):
-    """(原有的简单解析) 解析网络日志提取 token 和 secretkey"""
-    token = None
-    secret = None
-    
-    for entry in logs:
-        try:
-            message = json.loads(entry['message'])
-            method = message.get('message', {}).get('method', '')
-            params = message.get('message', {}).get('params', {})
-
-            headers = {}
-            if method == 'Network.requestWillBeSent':
-                headers = params.get('request', {}).get('headers', {})
-            elif method == 'Network.responseReceived':
-                headers = params.get('response', {}).get('requestHeaders', {})
-            
-            for k, v in headers.items():
-                k_lower = k.lower()
-                if k_lower == 'x-jlc-accesstoken':
-                    if v and v != "NONE" and len(v) > 5:
-                        token = v
-                elif k_lower == 'secretkey':
-                    if v and len(v) > 5:
-                        secret = v
-        except:
-            continue
-    return token, secret
-
 def sign_in_account(username, password, account_index, total_accounts, retry_count=0):
     """为单个账号执行完整的签到流程"""
     retry_label = ""
@@ -755,31 +628,37 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     }
 
     try:
-        # 1. 登录流程 (Oshwhub)
-        auth_code, pwd_error, err_msg = get_auth_code_from_aliv3(username, password, account_index)
+        # 1. 登录流程 (开源平台)
+        log(f"账号 {account_index} - 正在调用 登录(AliV3) 脚本进行登录(开源平台)...")
         
-        if pwd_error:
-            result['password_error'] = True
-            result['oshwhub_status'] = '密码错误'
-            return result
+        auth_code, error_msg, is_pwd_err = get_authcode_from_aliv3(username, password, account_index)
         
-        if auth_code:
-            # 拼接 URL 并跳转
-            login_url = f"https://oshwhub.com/sign_in?code={auth_code}"
-            log(f"账号 {account_index} - 正在使用 authCode 登录 Oshwhub...")
-            driver.get(login_url)
-            
-            # 等待登录成功
-            try:
-                WebDriverWait(driver, 20).until(
-                    lambda d: "oshwhub.com" in d.current_url and "code=" not in d.current_url
-                )
-                log(f"账号 {account_index} - ✅ Oshwhub 登录跳转成功")
-            except Exception:
-                log(f"账号 {account_index} - ⚠ 登录跳转超时或未检测到预期URL，尝试继续后续流程...")
-        else:
+        if is_pwd_err:
+             log(f"账号 {account_index} - ❌ 检测到账号或密码错误，跳过此账号 ({error_msg})")
+             result['password_error'] = True
+             result['oshwhub_status'] = '密码错误'
+             return result
+             
+        if not auth_code:
+            log("❌登录脚本异常：")
+            log(error_msg)
             result['oshwhub_status'] = '登录脚本异常'
-            return result # 返回失败，触发外部重试
+            return result
+
+        # 拼接 URL 并跳转
+        login_url = f"https://oshwhub.com/sign_in?code={auth_code}"
+        log(f"账号 {account_index} - 正在使用 authCode 登录...")
+        driver.get(login_url)
+        
+        # 等待登录成功 (通过检测URL或页面元素)
+        try:
+            # 等待页面加载且没有 error 提示，通常登录成功会跳转或停留在 oshwhub.com
+            WebDriverWait(driver, 20).until(
+                lambda d: "oshwhub.com" in d.current_url and "code=" not in d.current_url
+            )
+            log(f"账号 {account_index} - ✅ 登录跳转成功")
+        except Exception:
+            log(f"账号 {account_index} - ⚠ 登录跳转超时或未检测到预期URL，尝试继续后续流程...")
 
         # 3. 获取用户昵称
         time.sleep(2) # 稍作等待确保 Cookie 生效
@@ -823,7 +702,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 result['reward_results'] = click_gift_buttons(driver, account_index)
                 
             except:
-                # 如果没有找到"已签到"元素，则尝试点击"立即签到"按钮
+                # 如果没有找到"已签到"元素，则尝试点击"立即签到"按钮，并验证是否变为"已签到"
                 signed = False
                 max_attempts = 5
                 for attempt in range(max_attempts):
@@ -881,65 +760,53 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         # 9. 金豆签到流程
         log(f"账号 {account_index} - 开始金豆签到流程...")
         
-        # 再次调用 AliV3 获取 authCode 用于 m.jlc.com 登录
-        jindou_auth_code, jindou_pwd_error, _ = get_auth_code_from_aliv3(username, password, account_index)
+        # 打开页面，仅为了让 Network 有数据，方便后续提取 SecretKey，不再进行交互
+        driver.get("https://m.jlc.com/")
+        log(f"账号 {account_index} - 已访问 m.jlc.com (生成 SecretKey 日志)...")
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         
-        if jindou_pwd_error:
-            result['password_error'] = True
-            result['jindou_status'] = '密码错误'
-            return result
-            
-        if jindou_auth_code:
-            target_url = f"https://m.jlc.com/pages/my/index?code={jindou_auth_code}"
-            log(f"账号 {account_index} - 正在携带 authCode 访问 m.jlc.com 个人中心...")
-            driver.get(target_url)
-            
-            # --- 调试模式开始 ---
-            log(f"账号 {account_index} - 等待 10 秒后输出页面调试信息...")
-            time.sleep(10)
-            
-            # 执行深度调试 (同时提取凭证以防日志被消费)
-            debug_token, debug_secret = perform_deep_debug(driver, account_index)
-            
-            # 继续正常的提取流程 (传入已发现的凭证)
-            access_token = debug_token
-            secretkey = debug_secret
-            
-            if not access_token or not secretkey:
-                log(f"账号 {account_index} - 调试阶段未提取全凭证，继续等待...")
-                # 继续等待剩余时间 (timeout - 10s)
-                new_token, new_secret = wait_for_credentials(driver, account_index, timeout=10)
-                if not access_token: access_token = new_token
-                if not secretkey: secretkey = new_secret
-            
-            result['token_extracted'] = bool(access_token)
-            result['secretkey_extracted'] = bool(secretkey)
-            
-            if access_token and secretkey:
-                log(f"账号 {account_index} - ✅ 成功提取 token: {access_token[:20]}...")
-                log(f"账号 {account_index} - ✅ 成功提取 secretkey: {secretkey[:20]}...")
-                
-                jlc_client = JLCClient(access_token, secretkey, account_index, driver)
-                jindou_success = jlc_client.execute_full_process()
-                
-                # 记录金豆签到结果
-                result['jindou_success'] = jindou_success
-                result['jindou_status'] = jlc_client.sign_status
-                result['initial_jindou'] = jlc_client.initial_jindou
-                result['final_jindou'] = jlc_client.final_jindou
-                result['jindou_reward'] = jlc_client.jindou_reward
-                result['has_jindou_reward'] = jlc_client.has_reward
-                
-                if jindou_success:
-                    log(f"账号 {account_index} - ✅ 金豆签到流程完成")
-                else:
-                    log(f"账号 {account_index} - ❌ 金豆签到流程失败")
-            else:
-                log(f"账号 {account_index} - ❌ 无法提取到 token 或 secretkey，跳过金豆签到")
-                result['jindou_status'] = 'Token提取失败'
+        # 再次调用 AliV3 获取新的 authCode
+        log(f"账号 {account_index} - 正在再次调用 登录(AliV3) 脚本获取金豆登录授权码...")
+        jlc_auth_code, error_msg, _ = get_authcode_from_aliv3(username, password, account_index)
+        
+        access_token = None
+        if jlc_auth_code:
+            log(f"账号 {account_index} - ✅ 成功获取金豆登录 authCode: {jlc_auth_code}")
+            # 使用 API 换取 Token
+            access_token = login_m_jlc_by_code(jlc_auth_code, account_index)
         else:
-             log(f"账号 {account_index} - ❌ 金豆登录获取 authCode 失败，无法继续")
-             result['jindou_status'] = '登录失败'
+            log(f"账号 {account_index} - ❌ 获取金豆登录 authCode 失败: {error_msg}")
+        
+        # 提取 SecretKey (方法不变)
+        secretkey = extract_secretkey_from_devtools(driver)
+        
+        result['token_extracted'] = bool(access_token)
+        result['secretkey_extracted'] = bool(secretkey)
+        
+        if access_token and secretkey:
+            log(f"账号 {account_index} - ✅ 成功提取 token 和 secretkey")
+            
+            jlc_client = JLCClient(access_token, secretkey, account_index, driver)
+            jindou_success = jlc_client.execute_full_process()
+            
+            # 记录金豆签到结果
+            result['jindou_success'] = jindou_success
+            result['jindou_status'] = jlc_client.sign_status
+            result['initial_jindou'] = jlc_client.initial_jindou
+            result['final_jindou'] = jlc_client.final_jindou
+            result['jindou_reward'] = jlc_client.jindou_reward
+            result['has_jindou_reward'] = jlc_client.has_reward
+            
+            if jindou_success:
+                log(f"账号 {account_index} - ✅ 金豆签到流程完成")
+            else:
+                log(f"账号 {account_index} - ❌ 金豆签到流程失败")
+        else:
+            log(f"账号 {account_index} - ❌ 无法提取到 token 或 secretkey，跳过金豆签到")
+            if not access_token:
+                result['jindou_status'] = 'Token提取失败'
+            elif not secretkey:
+                result['jindou_status'] = 'SecretKey提取失败'
 
     except Exception as e:
         log(f"账号 {account_index} - ❌ 程序执行错误: {e}")
