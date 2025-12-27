@@ -26,7 +26,6 @@ jobs:
           pip install --upgrade pip
           pip install -r ./requirements.txt
           pip install PyExecJS
-          pip install subprocess
 
       - name: '准备Chrome驱动'
         uses: nanasess/setup-chromedriver@v2
