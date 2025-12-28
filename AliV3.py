@@ -227,23 +227,9 @@ class AliV3:
 
         cookies = {
             'device_id': 'c7d0a5f4b554477fae0e1ba29f84fb63',
-            'HWWAFSESID': 'bcd7d8b4f625fb57ac',
-            'HWWAFSESTIME': '1766299533105',
-            'Qs_lvt_290854': '1766237893%2C1766299553',
-            'Qs_pv_290854': '2499244294467079700%2C852781256760664000',
-            '__sameSiteCheck__': '1',
-            '_c_WBKFRo': '03ctatXDH7wXL1GIRpFWI9AUfuGhSVMzyOf5q8oX',
-            '_nb_ioWEgULi': '',
         }
 
         headers = {
-            'accept': 'application/json, text/plain, */*',
-            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
-            'cache-control': 'no-cache, no-store, must-revalidate',
-            'content-type': 'application/json',
-            'origin': 'https://passport.jlc.com',
-            'referer': 'https://passport.jlc.com/window/login?appId=JLC_PORTAL_PC&redirectUrl=https%3A%2F%2Fwww.jlc.com%2F',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0',
             'secretkey': '35616236663038352d643366382d343131662d396239622d366439643132653639373764',
             'x-jlc-clientuuid': '445de653-7a24-4242-88dd-0878479726aa-1766237894098',
         }
@@ -433,4 +419,5 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
+
 
