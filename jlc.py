@@ -17,6 +17,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from serverchan_sdk import sc_send
 
 # 修复 Python 3.7 在 CI 环境下的 platform Bug
@@ -435,6 +436,71 @@ def is_last_day_of_month():
     last_day = next_month - timedelta(days=next_month.day)
     return today.day == last_day.day
 
+def is_first_day_of_month():
+    """检查今天是否是当月1日"""
+    return datetime.now().day == 30
+
+def run_exam_process(driver, account_index):
+    """
+    运行立创题库答题流程
+    返回: (success: bool, score: int, msg: str)
+    """
+    exam_url = "https://member.jlc.com/integrated/exam-center/intermediary?examinationRelationUrl=https%3A%2F%2Fexam.kaoshixing.com%2Fexam%2Fbefore_answer_notice%2F1647581&examinationRelationId=1647581"
+    max_exam_retries = 3
+    
+    log(f"账号 {account_index} - 📅 检测到今天是1号，准备开始立创题库答题流程...")
+    
+    for attempt in range(1, max_exam_retries + 1):
+        log(f"账号 {account_index} - 🚀 答题流程第 {attempt}/{max_exam_retries} 次尝试")
+        
+        try:
+            # 2. 打开页面
+            driver.get(exam_url)
+            
+            # 3. 等待并点击开始答题按钮
+            try:
+                start_btn = WebDriverWait(driver, 20).until(
+                    EC.element_to_be_clickable((By.ID, "startExamBtn"))
+                )
+                start_btn.click()
+                log(f"账号 {account_index} - 已点击“开始答题”按钮，等待插件运行...")
+            except TimeoutException:
+                log(f"账号 {account_index} - ❌ 未找到“开始答题”按钮或加载超时")
+                continue # 进入下一次重试
+            
+            # 4. & 5. 等待网页重定向并获取分数
+            # 插件运行期间会重定向到答题页，脚本结束后重定向到分数页
+            # 设定3分钟超时 (180秒)
+            try:
+                # 直接等待分数元素出现，这代表流程已结束
+                score_element = WebDriverWait(driver, 180).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "span.score"))
+                )
+                
+                score_text = score_element.text.strip()
+                log(f"账号 {account_index} - 🏁 答题结束，获取到分数: {score_text}")
+                
+                if score_text.isdigit():
+                    score = int(score_text)
+                    if score > 60:
+                        return True, score, f"分数:{score}"
+                    else:
+                        log(f"账号 {account_index} - ❌ 分数 {score} 未超过60分，准备重试...")
+                else:
+                    log(f"账号 {account_index} - ❌ 提取到的分数不是数字: {score_text}，准备重试...")
+                    
+            except TimeoutException:
+                log(f"账号 {account_index} - ❌ 答题流程超时 (超过3分钟未跳转到分数页)，准备重试...")
+                
+        except Exception as e:
+            log(f"账号 {account_index} - ❌ 答题流程发生异常: {e}")
+        
+        # 如果不是最后一次尝试，稍作等待
+        if attempt < max_exam_retries:
+            time.sleep(random.randint(3, 5))
+
+    return False, 0, "最高得分未达标或脚本执行失败"
+
 def capture_reward_info(driver, account_index, gift_type):
     """抓取并输出奖励信息，返回礼包领取结果"""
     try:
@@ -662,6 +728,17 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
 
+    # 1. 检查是否需要加载答题插件 (每月1日)
+    trigger_exam = is_first_day_of_month()
+    if trigger_exam:
+        crx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'JLCTK.crx')
+        if os.path.exists(crx_path):
+            log(f"账号 {account_index} - 检测到插件文件，正在加载答题插件...")
+            chrome_options.add_extension(crx_path)
+        else:
+            log(f"账号 {account_index} - ⚠ 未找到答题插件 JLCTK.crx，跳过插件加载")
+            trigger_exam = False
+
     caps = DesiredCapabilities.CHROME
     caps['goog:loggingPrefs'] = {'performance': 'ALL'}
     
@@ -689,7 +766,12 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'token_extracted': False,
         'secretkey_extracted': False,
         'retry_count': retry_count,
-        'password_error': False  #标记密码错误
+        'password_error': False,  #标记密码错误
+        # 答题相关字段
+        'exam_triggered': False,
+        'exam_success': False,
+        'exam_score': 0,
+        'exam_msg': ""
     }
 
     try:
@@ -943,6 +1025,19 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                     
                     if jindou_success:
                         log(f"账号 {account_index} - ✅ 金豆签到流程完成")
+                        
+                        # 10. 如果金豆签到流程顺利（即登录状态正常）且今天是1号，执行立创题库答题
+                        if trigger_exam:
+                            exam_success, exam_score, exam_msg = run_exam_process(driver, account_index)
+                            result['exam_triggered'] = True
+                            result['exam_success'] = exam_success
+                            result['exam_score'] = exam_score
+                            result['exam_msg'] = exam_msg
+                            
+                            if exam_success:
+                                log(f"账号 {account_index} - ✅ 立创题库答题成功！")
+                            else:
+                                log(f"账号 {account_index} - ❌ 立创题库答题失败: {exam_msg}")
                     else:
                         log(f"账号 {account_index} - ❌ 金豆签到流程失败")
                 else:
@@ -987,7 +1082,12 @@ def process_single_account(username, password, account_index, total_accounts):
         'token_extracted': False,
         'secretkey_extracted': False,
         'retry_count': 0,  # 记录最后使用的retry_count
-        'password_error': False  # 标记密码错误
+        'password_error': False,  # 标记密码错误
+        # 答题相关字段合并
+        'exam_triggered': False,
+        'exam_success': False,
+        'exam_score': 0,
+        'exam_msg': ""
     }
     
     merged_success = {'oshwhub': False, 'jindou': False}
@@ -1021,6 +1121,15 @@ def process_single_account(username, password, account_index, total_accounts):
             merged_result['jindou_reward'] = result['jindou_reward']
             merged_result['has_jindou_reward'] = result['has_jindou_reward']
         
+        # 合并答题结果：如果本次触发了答题且成功，则更新
+        if result['exam_triggered']:
+            merged_result['exam_triggered'] = True
+            # 如果当前是成功的，或者之前没有记录（或者之前记录是失败的），更新结果
+            if result['exam_success'] or not merged_result['exam_success']:
+                merged_result['exam_success'] = result['exam_success']
+                merged_result['exam_score'] = result['exam_score']
+                merged_result['exam_msg'] = result['exam_msg']
+
         # 更新其他字段（如果之前未知）
         if merged_result['nickname'] == '未知' and result['nickname'] != '未知':
             merged_result['nickname'] = result['nickname']
@@ -1222,6 +1331,8 @@ def main():
     
     oshwhub_success_count = 0
     jindou_success_count = 0
+    exam_triggered_count = 0
+    exam_success_count = 0
     total_points_reward = 0
     total_jindou_reward = 0
     retried_accounts = []  # 合并所有重试过的账号
@@ -1242,8 +1353,14 @@ def main():
         if retry_count > 0:
             retried_accounts.append(account_index)
         
-        # 检查是否有失败情况（排除密码错误）
-        if (not result['oshwhub_success'] or not result['jindou_success']) and not password_error:
+        # 检查是否有签到失败情况（排除密码错误）
+        is_failed = (not result['oshwhub_success'] or not result['jindou_success'])
+        
+        # 如果触发了答题，答题失败也算作失败
+        if result.get('exam_triggered') and not result.get('exam_success'):
+            is_failed = True
+            
+        if is_failed and not password_error:
             failed_accounts.append(account_index)
         
         retry_label = ""
@@ -1281,6 +1398,15 @@ def main():
             else:
                 log(f"  ├── 金豆状态: 无法获取金豆信息")
             
+            # 显示答题结果 (如果触发)
+            if result.get('exam_triggered'):
+                exam_triggered_count += 1
+                if result.get('exam_success'):
+                    exam_success_count += 1
+                    log(f"  ├── 立创题库答题成功✅分数:{result.get('exam_score')}")
+                else:
+                    log(f"  ├── 立创题库答题失败❌原因:{result.get('exam_msg')}")
+            
             # 显示礼包领取结果
             for reward_result in result['reward_results']:
                 log(f"  ├── {reward_result}")
@@ -1297,6 +1423,17 @@ def main():
     log(f"  ├── 总账号数: {total_accounts}")
     log(f"  ├── 开源平台签到成功: {oshwhub_success_count}/{total_accounts}")
     log(f"  ├── 金豆签到成功: {jindou_success_count}/{total_accounts}")
+    
+    # 如果有触发答题，显示答题统计
+    if exam_triggered_count > 0:
+        exam_rate = (exam_success_count / exam_triggered_count) * 100
+        log(f"  ├── 立创题库答题成功: {exam_success_count}/{exam_triggered_count}")
+        log(f"  ├── 答题通过率: {exam_rate:.1f}%")
+        
+        # 统计答题未通过的账号
+        failed_exam_accounts = [r['account_index'] for r in all_results if r.get('exam_triggered') and not r.get('exam_success')]
+        if failed_exam_accounts:
+            log(f"  ⚠ 答题未通过账号: {', '.join(map(str, failed_exam_accounts))}")
     
     if total_points_reward > 0:
         log(f"  ├── 总计获得积分: +{total_points_reward}")
@@ -1324,7 +1461,7 @@ def main():
     if password_error_accounts:
         log(f"  ⚠密码错误的账号: {', '.join(map(str, password_error_accounts))}")
        
-    if not failed_oshwhub and not failed_jindou and not password_error_accounts:
+    if not failed_oshwhub and not failed_jindou and not password_error_accounts and (exam_triggered_count == exam_success_count):
         log("  🎉 所有账号全部签到成功!")
     elif password_error_accounts and not failed_oshwhub and not failed_jindou:
         log("  ⚠除了密码错误账号，其他账号全部签到成功!")
