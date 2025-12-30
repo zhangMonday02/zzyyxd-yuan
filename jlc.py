@@ -263,6 +263,84 @@ def get_oshwhub_points(driver, account_index):
     log(f"账号 {account_index} - ⚠ 无法获取积分信息")
     return 0
 
+def visit_exam_center(driver, account_index):
+    """访问考试中心页面，等待重定向稳定后输出页面信息"""
+    try:
+        log(f"账号 {account_index} - 正在访问考试中心页面...")
+        
+        # 考试中心URL
+        exam_url = "https://member.jlc.com/integrated/exam-center/intermediary?examinationRelationUrl=https%3A%2F%2Fexam.kaoshixing.com%2Fexam%2Fbefore_answer_notice%2F1647581&examinationRelationId=1647581"
+        
+        # 访问页面
+        driver.get(exam_url)
+        log(f"账号 {account_index} - 已开始访问考试中心，等待重定向稳定...")
+        
+        # 等待页面开始加载
+        time.sleep(3)
+        
+        # 等待重定向稳定 - 检查URL在10秒内是否变化
+        max_wait_time = 30  # 最长等待30秒
+        check_interval = 2  # 每2秒检查一次
+        stable_checks = 3  # 需要连续3次URL不变才认为稳定
+        current_stable_checks = 0
+        
+        previous_url = driver.current_url
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait_time:
+            # 等待一段时间
+            time.sleep(check_interval)
+            
+            # 获取当前URL
+            current_url = driver.current_url
+            
+            # 检查URL是否变化
+            if current_url == previous_url:
+                current_stable_checks += 1
+                log(f"账号 {account_index} - URL稳定检查: {current_stable_checks}/{stable_checks}")
+            else:
+                current_stable_checks = 0
+                log(f"账号 {account_index} - URL发生变化: {previous_url[:50]}... -> {current_url[:50]}...")
+                previous_url = current_url
+            
+            # 如果URL稳定了3次，认为页面已稳定
+            if current_stable_checks >= stable_checks:
+                log(f"账号 {account_index} - ✅ 页面重定向已稳定")
+                break
+            
+            # 检查页面是否完全加载
+            try:
+                ready_state = driver.execute_script("return document.readyState;")
+                if ready_state == "complete":
+                    log(f"账号 {account_index} - 页面加载状态: {ready_state}")
+            except:
+                pass
+        
+        # 最终获取页面信息
+        final_url = driver.current_url
+        page_title = driver.title
+        
+        log(f"账号 {account_index} - 📄 页面标题: {page_title}")
+        log(f"账号 {account_index} - 🔗 最终URL: {final_url}")
+        
+        # 额外等待2秒确保完全稳定
+        time.sleep(2)
+        
+        return {
+            'title': page_title,
+            'url': final_url,
+            'success': True
+        }
+        
+    except Exception as e:
+        log(f"账号 {account_index} - ❌ 访问考试中心页面失败: {e}")
+        return {
+            'title': '获取失败',
+            'url': '获取失败',
+            'success': False,
+            'error': str(e)
+        }
+
 class JLCClient:
     """调用嘉立创接口"""
     
@@ -736,7 +814,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     result = {
         'account_index': account_index,
         'nickname': '未知',
-        'customer_code': '未知',  # 新增：客编信息
+        'customer_code': '未知',  # 客编信息
+        'exam_center_info': None,  # 新增：考试中心页面信息
         'oshwhub_status': '未知',
         'oshwhub_success': False,
         'initial_points': 0,      # 签到前积分
@@ -1043,7 +1122,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             if login_success:
                 log(f"账号 {account_index} - ✅ m.jlc.com 登录接口调用成功")
                 
-                # === 新增：跳转到个人中心并提取客编信息 ===
+                # 跳转到个人中心并提取客编信息
                 customer_code = get_customer_code(driver, account_index)
                 if customer_code:
                     result['customer_code'] = customer_code
@@ -1077,6 +1156,12 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                         log(f"账号 {account_index} - ✅ 金豆签到流程完成")
                     else:
                         log(f"账号 {account_index} - ❌ 金豆签到流程失败")
+                    
+                    # === 新增：金豆签到结束后访问考试中心页面 ===
+                    log(f"账号 {account_index} - 金豆签到流程结束，开始访问考试中心页面...")
+                    exam_info = visit_exam_center(driver, account_index)
+                    result['exam_center_info'] = exam_info
+                    
                 else:
                     log(f"账号 {account_index} - ❌ 无法提取到 token 或 secretkey，跳过金豆签到")
                     result['jindou_status'] = 'Token提取失败'
@@ -1104,7 +1189,8 @@ def process_single_account(username, password, account_index, total_accounts):
     merged_result = {
         'account_index': account_index,
         'nickname': '未知',
-        'customer_code': '未知',  # 新增：客编信息
+        'customer_code': '未知',  # 客编信息
+        'exam_center_info': None,  # 新增：考试中心页面信息
         'oshwhub_status': '未知',
         'oshwhub_success': False,
         'initial_points': 0,
@@ -1160,6 +1246,9 @@ def process_single_account(username, password, account_index, total_accounts):
         
         if merged_result['customer_code'] == '未知' and result.get('customer_code') not in ['未知', '未找到']:
             merged_result['customer_code'] = result.get('customer_code', '未知')
+        
+        if not merged_result['exam_center_info'] and result.get('exam_center_info'):
+            merged_result['exam_center_info'] = result['exam_center_info']
         
         if not merged_result['token_extracted'] and result['token_extracted']:
             merged_result['token_extracted'] = result['token_extracted']
@@ -1370,6 +1459,7 @@ def main():
         account_index = result['account_index']
         nickname = result.get('nickname', '未知')
         customer_code = result.get('customer_code', '未知')
+        exam_center_info = result.get('exam_center_info')
         retry_count = result.get('retry_count', 0)
         password_error = result.get('password_error', False)
         
@@ -1418,6 +1508,13 @@ def main():
                 log(f"  ├── 金豆变化: {result['initial_jindou']} → {result['final_jindou']} (0)")
             else:
                 log(f"  ├── 金豆状态: 无法获取金豆信息")
+            
+            # 显示考试中心信息
+            if exam_center_info and exam_center_info.get('success'):
+                log(f"  ├── 考试中心页面标题: {exam_center_info.get('title', '未知')}")
+                log(f"  ├── 考试中心最终URL: {exam_center_info.get('url', '未知')}")
+            elif exam_center_info:
+                log(f"  ├── 考试中心访问失败: {exam_center_info.get('error', '未知错误')}")
             
             # 显示礼包领取结果
             for reward_result in result['reward_results']:
