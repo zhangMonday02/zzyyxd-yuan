@@ -435,6 +435,10 @@ def is_last_day_of_month():
     last_day = next_month - timedelta(days=next_month.day)
     return today.day == last_day.day
 
+def is_first_day_of_month():
+    """检查今天是否是每月1号"""
+    return datetime.now().day == 30
+
 def capture_reward_info(driver, account_index, gift_type):
     """抓取并输出奖励信息，返回礼包领取结果"""
     try:
@@ -642,6 +646,139 @@ def get_ali_auth_code(username, password, account_index=0):
         
     return auth_code
 
+def run_exam_process(driver, account_index):
+    """执行立创题库答题流程"""
+    log(f"账号 {account_index} - 🚀 触发1号特有流程：立创题库答题")
+    
+    exam_url = "https://m.jlc.com/mobile/index.html?source=jlc_mobile_app&clientType=WEB#/exam-center/exam-list"
+    max_exam_retries = 3
+    final_score = 0
+    
+    wait = WebDriverWait(driver, 15)
+    
+    for attempt in range(max_exam_retries + 1):
+        if attempt > 0:
+            log(f"账号 {account_index} - 🔄 题库答题重试第 {attempt} 次...")
+            
+        try:
+            # 1. 打开考试列表
+            log(f"账号 {account_index} - 正在打开考试列表...")
+            driver.get(exam_url)
+            
+            # 等待页面加载，给予充分时间渲染
+            time.sleep(5)
+            try:
+                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "button")))
+            except:
+                pass
+
+            # 2. 点击列表中的"开始"按钮
+            # 策略：查找所有按钮，看文本
+            start_btn = None
+            try:
+                # 获取所有按钮
+                buttons = driver.find_elements(By.TAG_NAME, "button")
+                for btn in buttons:
+                    if "开始" in btn.text:
+                        start_btn = btn
+                        break
+                
+                if not start_btn:
+                    # 尝试 XPath 模糊匹配
+                    start_btn = driver.find_element(By.XPATH, "//*[contains(text(), '开始') and contains(@class, 'active')]")
+            except:
+                pass
+            
+            if start_btn:
+                try:
+                    # 使用 JS 点击防止遮挡
+                    driver.execute_script("arguments[0].scrollIntoView();", start_btn)
+                    driver.execute_script("arguments[0].click();", start_btn)
+                    log(f"账号 {account_index} - 已点击考试列表'开始'按钮")
+                except Exception as e:
+                    log(f"账号 {account_index} - 点击'开始'按钮失败: {e}")
+                    raise e
+            else:
+                # 检查页面是否有特殊提示
+                try:
+                    body_text = driver.find_element(By.TAG_NAME, "body").text
+                    if "暂无考试" in body_text or "没有更多数据" in body_text:
+                        log(f"账号 {account_index} - 页面显示暂无考试，跳过答题")
+                        return True, 0, "暂无考试"
+                    if "已完成" in body_text or "查看成绩" in body_text:
+                        log(f"账号 {account_index} - 页面显示已完成/查看成绩，跳过答题")
+                        return True, 60, "已完成(跳过)"
+                    
+                    # 截取一部分源码用于调试
+                    page_source_snippet = driver.page_source[:500].replace('\n', '')
+                    log(f"账号 {account_index} - 未找到'开始'按钮，页面可能未正确加载。源码片段: {page_source_snippet}")
+                except:
+                    pass
+                
+                raise Exception("未找到开始按钮")
+
+            # 3. 等待重定向后点击"开始答题"按钮
+            # <button type="button" class="btn btn-primary btn-fix" id="startExamBtn" ...>
+            try:
+                # 等待 id="startExamBtn" 出现
+                real_start_btn = wait.until(EC.presence_of_element_located((By.ID, "startExamBtn")))
+                
+                # 确保可见
+                time.sleep(1) 
+                log(f"账号 {account_index} - 找到'开始答题'按钮，点击并开始计时...")
+                
+                # JS 点击
+                driver.execute_script("arguments[0].click();", real_start_btn)
+                start_time = time.time()
+                
+            except Exception as e:
+                log(f"账号 {account_index} - 未找到'开始答题'按钮(startExamBtn): {e}")
+                raise e
+
+            # 4. 等待插件运行和网页重定向
+            log(f"账号 {account_index} - 等待试卷加载及插件自动答题...")
+            
+            # 循环检查是否跳转到分数页面或超时
+            # 超时时间 3分钟 = 180秒
+            timeout = 180
+            exam_finished = False
+            
+            while time.time() - start_time < timeout:
+                try:
+                    # 检查是否出现分数元素 <span class="score">
+                    score_element = driver.find_elements(By.CSS_SELECTOR, "span.score")
+                    if score_element and score_element[0].is_displayed():
+                        # 确保分数不为空
+                        score_text = score_element[0].text.strip()
+                        if score_text.isdigit():
+                            final_score = int(score_text)
+                            exam_finished = True
+                            log(f"账号 {account_index} - ✅ 答题结束，检测到分数: {final_score}")
+                            break
+                except:
+                    pass
+                time.sleep(2)
+            
+            if not exam_finished:
+                log(f"账号 {account_index} - ❌ 答题超时 (超过3分钟未检测到分数页面)")
+                # 超时算失败，进入重试
+                continue
+            
+            # 5. 检查分数
+            if final_score > 60:
+                log(f"账号 {account_index} - 🎉 题库签到成功！分数: {final_score}")
+                return True, final_score, "成功"
+            else:
+                log(f"账号 {account_index} - ❌ 分数低于或等于60分 ({final_score})，准备重试...")
+                continue
+
+        except Exception as e:
+            log(f"账号 {account_index} - ⚠ 答题流程发生异常: {e}")
+            time.sleep(3)
+    
+    log(f"账号 {account_index} - ❌ 题库答题失败 (已重试{max_exam_retries}次)")
+    return False, final_score, "多次重试失败"
+
 def sign_in_account(username, password, account_index, total_accounts, retry_count=0):
     """为单个账号执行完整的签到流程"""
     retry_label = ""
@@ -661,6 +798,17 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # 禁用图像加载
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
+    # 添加移动端 UA，确保 m.jlc.com 加载正确的移动端视图
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36')
+    
+    # 如果是1号，加载答题插件
+    extension_path = os.path.abspath("JLCTK.crx")
+    if is_first_day_of_month():
+        if os.path.exists(extension_path):
+            log(f"账号 {account_index} - 检测到今天是1号，加载题库答题插件: {extension_path}")
+            chrome_options.add_extension(extension_path)
+        else:
+            log(f"账号 {account_index} - ⚠ 今天是1号但未找到插件 JLCTK.crx，将跳过答题流程")
 
     caps = DesiredCapabilities.CHROME
     caps['goog:loggingPrefs'] = {'performance': 'ALL'}
@@ -689,7 +837,11 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'token_extracted': False,
         'secretkey_extracted': False,
         'retry_count': retry_count,
-        'password_error': False  #标记密码错误
+        'password_error': False, #标记密码错误
+        'exam_triggered': False,    # 是否触发了答题
+        'exam_success': False,      # 答题是否成功
+        'exam_score': 0,            # 答题分数
+        'exam_msg': ""              # 答题结果消息
     }
 
     try:
@@ -881,6 +1033,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             log(f"账号 {account_index} - ✅ 成功获取 m.jlc.com 登录 authCode")
             
             # 使用 JS 进行登录
+            # 修复：添加 credentials: 'include' 以支持 Cookie，补充 Headers，优先使用 uni.setStorageSync
             login_js = """
             var code = arguments[0];
             var callback = arguments[1];
@@ -890,14 +1043,26 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             fetch('/api/login/login-by-code', {
                 method: 'POST',
                 body: formData,
+                credentials: 'include', // 关键修复：允许请求携带和设置 Cookie
                 headers: {
-                    'X-JLC-AccessToken': 'NONE'
+                    'X-JLC-AccessToken': 'NONE',
+                    'X-JLC-ClientType': 'WEB', // 关键修复：补全客户端标识
+                    'X-JLC-ApplicationId': 'jlc-h5'
                 }
             })
             .then(response => response.json())
             .then(data => {
                 if (data.code === 200 && data.data && data.data.accessToken) {
-                    window.localStorage.setItem('X-JLC-AccessToken', data.data.accessToken);
+                    // 关键修复：尝试调用页面原生的 uni 存储方法，以确保格式完全兼容
+                    try {
+                        if (window.uni && window.uni.setStorageSync) {
+                            window.uni.setStorageSync('X-JLC-AccessToken', data.data.accessToken);
+                        } else {
+                            window.localStorage.setItem('X-JLC-AccessToken', data.data.accessToken);
+                        }
+                    } catch (e) {
+                        window.localStorage.setItem('X-JLC-AccessToken', data.data.accessToken);
+                    }
                     callback(true);
                 } else {
                     console.error('Login failed:', data);
@@ -930,6 +1095,15 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 if access_token and secretkey:
                     log(f"账号 {account_index} - ✅ 成功提取 token 和 secretkey")
                     
+                    # 关键修改：手动设置 Cookie 以保证浏览器端的登录状态，防止 driver.get 跳转时丢失会话
+                    try:
+                        # 设置 Cookie，使其在跳转时生效
+                        driver.execute_script(f"document.cookie = 'X-JLC-AccessToken={access_token}; path=/; domain=.jlc.com';")
+                        driver.execute_script(f"document.cookie = 'accessToken={access_token}; path=/; domain=.jlc.com';")
+                        log(f"账号 {account_index} - 已同步 Token 到 Cookie，防止跳转丢失登录状态")
+                    except Exception as e:
+                        log(f"账号 {account_index} - ⚠ 设置 Cookie 失败: {e}")
+
                     jlc_client = JLCClient(access_token, secretkey, account_index, driver)
                     jindou_success = jlc_client.execute_full_process()
                     
@@ -945,8 +1119,20 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                         log(f"账号 {account_index} - ✅ 金豆签到流程完成")
                     else:
                         log(f"账号 {account_index} - ❌ 金豆签到流程失败")
+                    
+                    # 10. 立创题库答题流程 (仅1号且金豆流程之后)
+                    if is_first_day_of_month():
+                        # 需要确保已经登录状态，金豆流程能跑说明登录ok
+                        if os.path.exists(extension_path):
+                            exam_success, exam_score, exam_msg = run_exam_process(driver, account_index)
+                            result['exam_triggered'] = True
+                            result['exam_success'] = exam_success
+                            result['exam_score'] = exam_score
+                            result['exam_msg'] = exam_msg
+                        else:
+                            log(f"账号 {account_index} - ⚠ 插件未找到，跳过答题")
                 else:
-                    log(f"账号 {account_index} - ❌ 无法提取到 token 或 secretkey，跳过金豆签到")
+                    log(f"账号 {account_index} - ❌ 无法提取到 token 或 secretkey，跳过金豆签到及答题")
                     result['jindou_status'] = 'Token提取失败'
             else:
                 log(f"账号 {account_index} - ❌ m.jlc.com 登录接口返回失败")
@@ -963,6 +1149,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
 
 def should_retry(merged_success, password_error):
     """判断是否需要重试：如果开源平台或金豆签到未成功，且不是密码错误"""
+    # 注意：答题流程失败不触发全流程重试，所以这里只检查 oshwhub 和 jindou
     need_retry = (not merged_success['oshwhub'] or not merged_success['jindou']) and not password_error
     return need_retry
 
@@ -987,7 +1174,11 @@ def process_single_account(username, password, account_index, total_accounts):
         'token_extracted': False,
         'secretkey_extracted': False,
         'retry_count': 0,  # 记录最后使用的retry_count
-        'password_error': False  # 标记密码错误
+        'password_error': False,  # 标记密码错误
+        'exam_triggered': False,
+        'exam_success': False,
+        'exam_score': 0,
+        'exam_msg': ""
     }
     
     merged_success = {'oshwhub': False, 'jindou': False}
@@ -1020,6 +1211,13 @@ def process_single_account(username, password, account_index, total_accounts):
             merged_result['final_jindou'] = result['final_jindou']
             merged_result['jindou_reward'] = result['jindou_reward']
             merged_result['has_jindou_reward'] = result['has_jindou_reward']
+        
+        # 合并答题结果：答题结果如果本次触发了，就更新（答题内部有重试，这里只需取最后一次执行结果）
+        if result['exam_triggered']:
+            merged_result['exam_triggered'] = True
+            merged_result['exam_success'] = result['exam_success']
+            merged_result['exam_score'] = result['exam_score']
+            merged_result['exam_msg'] = result['exam_msg']
         
         # 更新其他字段（如果之前未知）
         if merged_result['nickname'] == '未知' and result['nickname'] != '未知':
@@ -1222,6 +1420,9 @@ def main():
     
     oshwhub_success_count = 0
     jindou_success_count = 0
+    exam_success_count = 0 # 答题成功计数
+    exam_attempt_count = 0 # 触发答题的账号计数
+    
     total_points_reward = 0
     total_jindou_reward = 0
     retried_accounts = []  # 合并所有重试过的账号
@@ -1243,7 +1444,12 @@ def main():
             retried_accounts.append(account_index)
         
         # 检查是否有失败情况（排除密码错误）
-        if (not result['oshwhub_success'] or not result['jindou_success']) and not password_error:
+        # 失败条件：Oshwhub失败 OR Jindou失败 OR (触发了答题 AND 答题失败)
+        is_fail = (not result['oshwhub_success'] or not result['jindou_success'])
+        if result['exam_triggered'] and not result['exam_success']:
+            is_fail = True
+            
+        if is_fail and not password_error:
             failed_accounts.append(account_index)
         
         retry_label = ""
@@ -1285,6 +1491,15 @@ def main():
             for reward_result in result['reward_results']:
                 log(f"  ├── {reward_result}")
             
+            # 显示答题结果
+            if result['exam_triggered']:
+                exam_attempt_count += 1
+                if result['exam_success']:
+                    exam_success_count += 1
+                    log(f"  ├── 立创题库答题成功✅分数:{result['exam_score']}")
+                else:
+                    log(f"  ├── 立创题库答题失败❌原因:{result['exam_msg']}")
+
             if result['oshwhub_success']:
                 oshwhub_success_count += 1
             if result['jindou_success']:
@@ -1298,13 +1513,18 @@ def main():
     log(f"  ├── 开源平台签到成功: {oshwhub_success_count}/{total_accounts}")
     log(f"  ├── 金豆签到成功: {jindou_success_count}/{total_accounts}")
     
+    if exam_attempt_count > 0:
+        log(f"  ├── 题库答题成功: {exam_success_count}/{exam_attempt_count}")
+        exam_rate = (exam_success_count / exam_attempt_count) * 100
+        log(f"  ├── 答题通过率: {exam_rate:.1f}%")
+
     if total_points_reward > 0:
         log(f"  ├── 总计获得积分: +{total_points_reward}")
     
     if total_jindou_reward > 0:
         log(f"  ├── 总计获得金豆: +{total_jindou_reward}")
     
-    # 计算成功率
+    # 计算签到成功率
     oshwhub_rate = (oshwhub_success_count / total_accounts) * 100 if total_accounts > 0 else 0
     jindou_rate = (jindou_success_count / total_accounts) * 100 if total_accounts > 0 else 0
     
@@ -1314,20 +1534,24 @@ def main():
     # 失败账号列表（排除密码错误）
     failed_oshwhub = [r['account_index'] for r in all_results if not r['oshwhub_success'] and not r.get('password_error', False)]
     failed_jindou = [r['account_index'] for r in all_results if not r['jindou_success'] and not r.get('password_error', False)]
+    failed_exam = [r['account_index'] for r in all_results if r['exam_triggered'] and not r['exam_success'] and not r.get('password_error', False)]
     
     if failed_oshwhub:
         log(f"  ⚠ 开源平台失败账号: {', '.join(map(str, failed_oshwhub))}")
     
     if failed_jindou:
         log(f"  ⚠ 金豆签到失败账号: {', '.join(map(str, failed_jindou))}")
+    
+    if failed_exam:
+        log(f"  ⚠ 答题未通过的账号: {', '.join(map(str, failed_exam))}")
         
     if password_error_accounts:
-        log(f"  ⚠密码错误的账号: {', '.join(map(str, password_error_accounts))}")
+        log(f"  ⚠ 密码错误的账号: {', '.join(map(str, password_error_accounts))}")
        
-    if not failed_oshwhub and not failed_jindou and not password_error_accounts:
-        log("  🎉 所有账号全部签到成功!")
-    elif password_error_accounts and not failed_oshwhub and not failed_jindou:
-        log("  ⚠除了密码错误账号，其他账号全部签到成功!")
+    if not failed_oshwhub and not failed_jindou and not failed_exam and not password_error_accounts:
+        log("  🎉 所有账号全部签到及任务完成!")
+    elif password_error_accounts and not failed_oshwhub and not failed_jindou and not failed_exam:
+        log("  ⚠ 除了密码错误账号，其他账号任务全部成功!")
     
     log("=" * 70)
     
@@ -1344,7 +1568,7 @@ def main():
         sys.exit(1)
     else:
         if enable_failure_exit:
-            log("✅ 所有账号签到成功，程序正常退出")
+            log("✅ 所有账号任务成功，程序正常退出")
         else:
             log("✅ 程序正常退出")
         sys.exit(0)
