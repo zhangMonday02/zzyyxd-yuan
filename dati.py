@@ -20,10 +20,12 @@ except ImportError:
     print("❌ 错误: 未找到 Utils.py 或 pwdEncrypt 函数，请确保同目录下存在该文件")
     sys.exit(1)
 
+
 def log(msg):
     """带时间戳的日志输出"""
     full_msg = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
     print(full_msg, flush=True)
+
 
 def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
     """
@@ -83,8 +85,7 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                         # 也尝试从JSON响应中提取
                         if '"captchaTicket"' in line:
                             try:
-                                # 尝试找到JSON部分
-                                json_match = re.search(r'\{.*"captchaTicket"\s*:\s*"([^"]+)".*\}', line)
+                                json_match = re.search(r'"captchaTicket"\s*:\s*"([^"]+)"', line)
                                 if json_match:
                                     captcha_ticket = json_match.group(1)
                                     log(f"✅ 从JSON响应中提取到 captchaTicket: {captcha_ticket[:20]}...")
@@ -100,9 +101,6 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                             for rem_line in remaining.split('\n'):
                                 if rem_line.strip():
                                     print(f"  [AliV3min] {rem_line}")
-                                    if "SUCCESS: Obtained CaptchaTicket:" in rem_line:
-                                        # 提取ticket (可能在同一行或下一行)
-                                        pass
                         break
                         
                 except Exception as e:
@@ -125,57 +123,65 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
     
     return None
 
-def send_request_via_browser(driver, url, method='POST', body=None, headers=None):
+
+def send_request_via_browser(driver, url, method='POST', body=None):
     """
     通过浏览器控制台发送请求
     返回响应的JSON对象或None
     """
-    if headers is None:
-        headers = {}
-    
-    # 构建fetch请求的JavaScript代码
-    if body:
-        body_json = json.dumps(body)
-        js_code = f"""
-        return new Promise((resolve, reject) => {{
-            fetch('{url}', {{
-                method: '{method}',
-                headers: {{
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json, text/plain, */*',
-                    ...{json.dumps(headers)}
-                }},
-                body: JSON.stringify({body_json}),
-                credentials: 'include'
-            }})
-            .then(response => response.json())
-            .then(data => resolve(JSON.stringify(data)))
-            .catch(error => resolve(JSON.stringify({{error: error.message}})));
-        }});
-        """
-    else:
-        js_code = f"""
-        return new Promise((resolve, reject) => {{
-            fetch('{url}', {{
-                method: '{method}',
-                headers: {{
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json, text/plain, */*',
-                    ...{json.dumps(headers)}
-                }},
-                credentials: 'include'
-            }})
-            .then(response => response.json())
-            .then(data => resolve(JSON.stringify(data)))
-            .catch(error => resolve(JSON.stringify({{error: error.message}})));
-        }});
-        """
-    
     try:
-        result = driver.execute_async_script(f"""
-            var callback = arguments[arguments.length - 1];
-            {js_code.replace('return new Promise', 'new Promise')}.then(callback);
-        """)
+        if body:
+            body_str = json.dumps(body, ensure_ascii=False)
+            js_code = """
+            var url = arguments[0];
+            var bodyData = arguments[1];
+            var callback = arguments[2];
+            
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json, text/plain, */*'
+                },
+                body: bodyData,
+                credentials: 'include'
+            })
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                callback(JSON.stringify(data));
+            })
+            .catch(function(error) {
+                callback(JSON.stringify({error: error.message}));
+            });
+            """
+            result = driver.execute_async_script(js_code, url, body_str)
+        else:
+            js_code = """
+            var url = arguments[0];
+            var callback = arguments[1];
+            
+            fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json, text/plain, */*'
+                },
+                credentials: 'include'
+            })
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                callback(JSON.stringify(data));
+            })
+            .catch(function(error) {
+                callback(JSON.stringify({error: error.message}));
+            });
+            """
+            result = driver.execute_async_script(js_code, url)
+        
         if result:
             return json.loads(result)
         return None
@@ -183,37 +189,6 @@ def send_request_via_browser(driver, url, method='POST', body=None, headers=None
         log(f"❌ 浏览器请求失败: {e}")
         return None
 
-def init_session_with_retry(driver, max_retries=3):
-    """
-    发送初始化会话请求，带重试机制
-    成功返回True，失败返回False
-    """
-    url = "https://passport.jlc.com/api/cas/login/get-init-session"
-    body = {"appId": "JLC_PORTAL_PC", "clientType": "PC-WEB"}
-    
-    for attempt in range(max_retries):
-        log(f"📡 发送初始化会话请求 (尝试 {attempt + 1}/{max_retries})...")
-        
-        response = send_request_via_browser(driver, url, 'POST', body)
-        
-        if response:
-            log(f"📨 响应: {json.dumps(response, ensure_ascii=False)}")
-            if response.get('success') == True and response.get('code') == 200:
-                log("✅ 初始化会话成功")
-                return True
-            else:
-                log(f"⚠ 初始化会话响应异常: {response}")
-        else:
-            log("❌ 初始化会话请求失败，无响应")
-        
-        if attempt < max_retries - 1:
-            log("🔄 关闭浏览器并重新打开...")
-            driver.quit()
-            time.sleep(2)
-            # 重新创建浏览器 - 这里返回False让外层处理
-            return False
-    
-    return False
 
 def login_with_password(driver, username, password, captcha_ticket):
     """
@@ -242,7 +217,7 @@ def login_with_password(driver, username, password, captcha_ticket):
     response = send_request_via_browser(driver, url, 'POST', body)
     
     if response:
-        log(f"📨 登录响应: {json.dumps(response, ensure_ascii=False)[:200]}...")
+        log(f"📨 登录响应: {json.dumps(response, ensure_ascii=False)[:300]}...")
         
         # 检查登录成功 (code=2017 表示成功)
         if response.get('success') == True and response.get('code') == 2017:
@@ -261,6 +236,7 @@ def login_with_password(driver, username, password, captcha_ticket):
         return 'other_error', response
     
     return 'other_error', None
+
 
 def verify_login_on_member_page(driver, max_retries=3):
     """
@@ -313,15 +289,6 @@ def verify_login_on_member_page(driver, max_retries=3):
     
     return False
 
-def install_extension(driver, extension_path):
-    """
-    安装Chrome扩展
-    注意：需要在创建driver时就加载扩展，或使用特殊方式
-    """
-    # Chrome扩展需要在启动时加载，这里记录下
-    log(f"📦 扩展路径: {extension_path}")
-    # 实际扩展加载在创建driver时处理
-    return True
 
 def click_start_exam_button(driver, max_retries=3):
     """
@@ -336,18 +303,18 @@ def click_start_exam_button(driver, max_retries=3):
             time.sleep(3)
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
-            # 尝试查找按钮
+            # 尝试查找按钮 - 方式1: ID
             try:
                 start_btn = WebDriverWait(driver, 10).until(
                     EC.element_to_be_clickable((By.ID, "startExamBtn"))
                 )
-                log("✅ 找到开始答题按钮，点击中...")
+                log("✅ 找到开始答题按钮(ID)，点击中...")
                 start_btn.click()
                 return True
             except:
                 pass
             
-            # 备用方式查找
+            # 方式2: XPath查找按钮
             try:
                 start_btn = driver.find_element(By.XPATH, '//button[contains(@class, "btn-primary")]//span[contains(text(), "开始答题")]/..')
                 log("✅ 通过XPath找到开始答题按钮，点击中...")
@@ -356,7 +323,16 @@ def click_start_exam_button(driver, max_retries=3):
             except:
                 pass
             
-            # 再尝试其他方式
+            # 方式3: 直接找span
+            try:
+                start_btn = driver.find_element(By.XPATH, '//span[contains(@class, "startExam")]')
+                log("✅ 找到开始答题span，点击中...")
+                start_btn.click()
+                return True
+            except:
+                pass
+            
+            # 方式4: 模糊匹配
             try:
                 start_btn = driver.find_element(By.XPATH, '//*[contains(text(), "开始答题")]')
                 log("✅ 找到开始答题文本，点击中...")
@@ -379,6 +355,7 @@ def click_start_exam_button(driver, max_retries=3):
     
     return False
 
+
 def wait_for_exam_completion(driver, timeout_seconds=180):
     """
     等待答题完成（页面重定向）
@@ -390,22 +367,26 @@ def wait_for_exam_completion(driver, timeout_seconds=180):
     start_time = time.time()
     
     while time.time() - start_time < timeout_seconds:
-        current_url = driver.current_url
-        
-        # 检查URL是否变化（重定向到分数页面）
-        if current_url != initial_url:
-            # 检查是否是分数页面
-            if 'result' in current_url or 'score' in current_url or 'finish' in current_url:
-                log(f"✅ 检测到页面重定向到分数页面: {current_url}")
-                return True
-            # 可能是中间跳转
-            log(f"📍 页面跳转: {current_url}")
-            initial_url = current_url
+        try:
+            current_url = driver.current_url
+            
+            # 检查URL是否变化（重定向到分数页面）
+            if current_url != initial_url:
+                # 检查是否是分数页面
+                if 'result' in current_url.lower() or 'score' in current_url.lower() or 'finish' in current_url.lower():
+                    log(f"✅ 检测到页面重定向到分数页面: {current_url}")
+                    return True
+                # 可能是中间跳转
+                log(f"📍 页面跳转: {current_url}")
+                initial_url = current_url
+        except:
+            pass
         
         time.sleep(2)
     
     log(f"⏰ 等待超时 ({timeout_seconds} 秒)，脚本可能未成功执行")
     return False
+
 
 def get_exam_score(driver):
     """
@@ -418,7 +399,6 @@ def get_exam_score(driver):
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(2)
         
-        # 尝试多种方式获取分数
         # 方式1: class="score"
         try:
             score_elem = driver.find_element(By.CLASS_NAME, "score")
@@ -429,7 +409,7 @@ def get_exam_score(driver):
         except:
             pass
         
-        # 方式2: 通过XPath查找
+        # 方式2: XPath
         try:
             score_elem = driver.find_element(By.XPATH, '//span[@class="score"]')
             score_text = score_elem.text.strip()
@@ -439,7 +419,7 @@ def get_exam_score(driver):
         except:
             pass
         
-        # 方式3: 搜索页面中的分数
+        # 方式3: 搜索页面源码
         page_source = driver.page_source
         score_match = re.search(r'<span[^>]*class="score"[^>]*>(\d+)</span>', page_source)
         if score_match:
@@ -453,6 +433,7 @@ def get_exam_score(driver):
     except Exception as e:
         log(f"❌ 获取分数异常: {e}")
         return None
+
 
 def create_chrome_driver(with_extension=False, extension_path=None):
     """
@@ -478,6 +459,7 @@ def create_chrome_driver(with_extension=False, extension_path=None):
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     return driver
+
 
 def process_single_account(username, password, account_index, total_accounts):
     """
@@ -537,6 +519,10 @@ def process_single_account(username, password, account_index, total_accounts):
                         log("✅ 初始化会话成功")
                         init_success = True
                         break
+                    else:
+                        log(f"⚠ 响应异常: {response}")
+                else:
+                    log("❌ 请求无响应")
                 
                 init_retry_count += 1
                 if init_retry_count < 3:
@@ -552,12 +538,14 @@ def process_single_account(username, password, account_index, total_accounts):
                 log("❌ 初始化会话失败超过3次，退出程序")
                 result['status'] = '初始化失败'
                 result['failure_reason'] = '初始化会话失败'
-                driver.quit()
-                sys.exit(1)  # 严重错误，直接退出
+                if driver:
+                    driver.quit()
+                sys.exit(1)
             
             # 步骤3: 调用AliV3min.py获取captchaTicket
             log("🌐 步骤3: 获取验证码Ticket...")
-            driver.quit()  # 暂时关闭浏览器
+            driver.quit()
+            driver = None
             
             captcha_ticket = call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3)
             
@@ -565,7 +553,7 @@ def process_single_account(username, password, account_index, total_accounts):
                 log("❌ 获取captchaTicket失败超过3次，退出程序")
                 result['status'] = 'captchaTicket获取失败'
                 result['failure_reason'] = '验证码获取失败'
-                sys.exit(1)  # 严重错误，直接退出
+                sys.exit(1)
             
             # 重新创建浏览器
             driver = create_chrome_driver()
@@ -582,37 +570,37 @@ def process_single_account(username, password, account_index, total_accounts):
                 result['status'] = '密码错误'
                 result['failure_reason'] = '账号或密码不正确'
                 driver.quit()
-                return result  # 密码错误不重试，直接返回
+                return result
             
             if login_status == 'other_error':
                 log(f"⚠ 登录返回其他错误，将重试整个流程...")
                 driver.quit()
-                continue  # 重试整个流程
+                driver = None
+                time.sleep(3)
+                continue
             
             if login_status != 'success':
                 log(f"⚠ 登录未成功，将重试整个流程...")
                 driver.quit()
+                driver = None
+                time.sleep(3)
                 continue
             
             # 步骤5: 验证登录成功
             log("🌐 步骤5: 验证登录状态...")
-            login_verified = False
-            
-            for verify_attempt in range(3):
-                if verify_login_on_member_page(driver):
-                    login_verified = True
-                    break
-                if verify_attempt < 2:
-                    log(f"⚠ 验证登录失败，重试整个流程...")
-                    break
+            login_verified = verify_login_on_member_page(driver)
             
             if not login_verified:
+                log(f"⚠ 验证登录失败，将重试整个流程...")
                 driver.quit()
-                continue  # 重试整个流程
+                driver = None
+                time.sleep(3)
+                continue
             
             # 步骤6: 安装插件并打开答题页面
             log("🌐 步骤6: 准备答题...")
             driver.quit()
+            driver = None
             
             # 检查插件是否存在
             extension_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'JLCTK.crx')
@@ -624,23 +612,33 @@ def process_single_account(username, password, account_index, total_accounts):
             driver = create_chrome_driver(with_extension=True, extension_path=extension_path)
             
             # 需要重新登录（新的浏览器实例）
-            # 先打开passport获取cookie
             driver.get("https://passport.jlc.com")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             time.sleep(2)
             
             # 重新获取captchaTicket并登录
             log("🔄 重新获取验证码并登录...")
+            driver.quit()
+            driver = None
+            
             captcha_ticket = call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3)
             if not captcha_ticket:
                 log("❌ 重新获取captchaTicket失败")
-                driver.quit()
+                time.sleep(3)
                 continue
+            
+            # 重新创建带插件的浏览器
+            driver = create_chrome_driver(with_extension=True, extension_path=extension_path)
+            driver.get("https://passport.jlc.com")
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            time.sleep(2)
             
             login_status, _ = login_with_password(driver, username, password, captcha_ticket)
             if login_status != 'success':
                 log("❌ 重新登录失败")
                 driver.quit()
+                driver = None
+                time.sleep(3)
                 continue
             
             # 答题流程，最多重试3次
@@ -651,9 +649,13 @@ def process_single_account(username, password, account_index, total_accounts):
                 
                 driver.get(exam_url)
                 log("⏳ 等待页面加载和重定向...")
-                time.sleep(10)  # 等待重定向完成
+                time.sleep(10)
                 
-                WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                try:
+                    WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                except:
+                    pass
+                
                 log(f"📍 当前页面: {driver.current_url}")
                 log(f"📍 页面标题: {driver.title}")
                 
