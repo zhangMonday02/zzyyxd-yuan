@@ -29,13 +29,13 @@ def log(msg):
     print(full_msg, flush=True)
 
 # -------------------------------------------------------------------------
-# 核心答题脚本 (包含完整题库 + 双重匹配策略)
+# 核心答题脚本 (1:1 复刻原插件逻辑)
 # -------------------------------------------------------------------------
 AUTO_ANSWER_SCRIPT = r"""
 (function () {
-    console.log("🚀 [AutoAnswer] 脚本注入成功，开始运行...");
+    console.log("🚀 [AutoAnswer] 脚本注入成功，开始运行(复刻版)...");
 
-    /* ================= MD5 算法 ================= */
+    /* ================= MD5 算法 (原样复制) ================= */
     function safeAdd (x, y) {
         var lsw = (x & 0xffff) + (y & 0xffff)
         var msw = (x >> 16) + (y >> 16) + (lsw >> 16)
@@ -133,31 +133,61 @@ AUTO_ANSWER_SCRIPT = r"""
             d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379)
             c = md5ii(c, d, a, b, x[i + 2], 15, 718787259)
             b = md5ii(b, c, d, a, x[i + 9], 21, -343485551)
-            a = safeAdd(a, olda); b = safeAdd(b, oldb); c = safeAdd(c, oldc); d = safeAdd(d, oldd)
+
+            a = safeAdd(a, olda)
+            b = safeAdd(b, oldb)
+            c = safeAdd(c, oldc)
+            d = safeAdd(d, oldd)
         }
-        function binl2rstr(input) {
-            var output = '';
-            for (var i = 0; i < input.length * 32; i += 8) output += String.fromCharCode((input[i >> 5] >>> (i % 32)) & 0xff);
-            return output;
-        }
-        function rstr2binl(input) {
-            var output = Array(input.length >> 2);
-            for (var i = 0; i < output.length; i++) output[i] = 0;
-            for (var i = 0; i < input.length * 8; i += 8) output[i >> 5] |= (input.charCodeAt(i / 8) & 0xff) << (i % 32);
-            return output;
-        }
-        function rstr2hex(input) {
-            var hexTab = '0123456789abcdef'; var output = '';
-            for (var i = 0; i < input.length; i++) {
-                var x = input.charCodeAt(i);
-                output += hexTab.charAt((x >>> 4) & 0x0f) + hexTab.charAt(x & 0x0f);
+        function binl2rstr (input) {
+            var i
+            var output = ''
+            var length32 = input.length * 32
+            for (i = 0; i < length32; i += 8) {
+                output += String.fromCharCode((input[i >> 5] >>> (i % 32)) & 0xff)
             }
-            return output;
+            return output
         }
-        function str2rstrUTF8(input) { return unescape(encodeURIComponent(input)); }
-        function rawMD5(s) { return binl2rstr(binlMD5(rstr2binl(str2rstrUTF8(s)), s.length * 8)); }
-        function hexMD5(s) { return rstr2hex(rawMD5(s)); }
-        return hexMD5(string);
+        function rstr2binl (input) {
+            var i
+            var output = []
+            output[(input.length >> 2) - 1] = undefined
+            for (i = 0; i < output.length; i += 1) {
+                output[i] = 0
+            }
+            var length8 = input.length * 8
+            for (i = 0; i < length8; i += 8) {
+                output[i >> 5] |= (input.charCodeAt(i / 8) & 0xff) << (i % 32)
+            }
+            return output
+        }
+        function rstrMD5 (s) {
+            return binl2rstr(binlMD5(rstr2binl(s), s.length * 8))
+        }
+        function rstr2hex (input) {
+            var hexTab = '0123456789abcdef'
+            var output = ''
+            var x
+            var i
+            for (i = 0; i < input.length; i += 1) {
+                x = input.charCodeAt(i)
+                output += hexTab.charAt((x >>> 4) & 0x0f) + hexTab.charAt(x & 0x0f)
+            }
+            return output
+        }
+        function str2rstrUTF8 (input) {
+            return unescape(encodeURIComponent(input))
+        }
+        function rawMD5 (s) {
+            return rstrMD5(str2rstrUTF8(s))
+        }
+        function hexMD5 (s) {
+            return rstr2hex(rawMD5(s))
+        }
+        function md5 (string) {
+            return hexMD5(string)
+        }
+        return md5(string);
     }
 
     /* ================= 题库数据 (完整) ================= */
@@ -274,13 +304,16 @@ AUTO_ANSWER_SCRIPT = r"""
             console.log("🎲 [AutoAnswer] 开始随机填充剩余未答题目...");
             $('div.question-content[data-commit="false"]').each(function () {
                 if ($(this).find('.select.active').length === 0 && $(this).find('input:checked').length === 0) {
-                    $(this).find(`span.words-option:eq(${randomNum(0, 3)})`).click();
-                    $(this).find(`span.words:eq(${randomNum(0, 1)})`).click();
+                    var el1 = $(this).find(`span.words-option:eq(${randomNum(0, 3)})`)[0];
+                    if(el1) el1.click();
+                    var el2 = $(this).find(`span.words:eq(${randomNum(0, 1)})`)[0];
+                    if(el2) el2.click();
                 }
             });
-        }, 12000); 
+        }, 15000); // 15秒后执行随机填充
     }
 
+    // 执行入口
     try {
         renderResultInExamStartPage();
         rednerNotFindQuestion();
@@ -741,7 +774,7 @@ def process_single_account(username, password, account_index, total_accounts):
         driver = None
         try:
             log("🌐 启动浏览器...")
-            driver = create_chrome_driver() # 修复参数错误
+            driver = create_chrome_driver()
             driver.get("https://passport.jlc.com")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
