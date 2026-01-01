@@ -30,30 +30,34 @@ def log(msg):
 
 def create_chrome_driver(with_extension=True):
     """
-    创建Chrome浏览器实例 - 包含防检测配置和插件加载
+    创建Chrome浏览器实例 - 包含防检测配置和插件加载(目录方式)
     """
     chrome_options = Options()
     
-    # --- 防检测核心配置 ---
+    # --- 1. 基础 & 性能参数 ---
     chrome_options.add_argument("--headless=new") 
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-setuid-sandbox")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument(f"--user-data-dir={tempfile.mkdtemp()}")
     
-    # --- 插件加载 ---
+    # --- 2. 防检测参数 ---
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    # --- 3. 插件加载 (加载解压后的目录) ---
     if with_extension:
-        extension_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'JLCTK.crx')
+        # 获取当前脚本所在目录下的 extension 文件夹的绝对路径
+        extension_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'extension')
         if os.path.exists(extension_path):
-            chrome_options.add_extension(extension_path)
-            log(f"📦 已配置加载插件: {extension_path}")
+            chrome_options.add_argument(f"--load-extension={extension_path}")
+            log(f"📦 已配置加载插件目录: {extension_path}")
         else:
-            log(f"⚠ 警告: 未找到插件文件 {extension_path}，将不加载插件")
+            log(f"⚠ 警告: 未找到插件目录 {extension_path}，请确认目录名为 'extension'")
     
     driver = webdriver.Chrome(options=chrome_options)
     
@@ -67,6 +71,34 @@ def create_chrome_driver(with_extension=True):
     })
     
     return driver
+
+
+def wait_for_page_load(driver, timeout=20):
+    """
+    4. 等待页面完全加载 (document.readyState === 'complete')
+    """
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: d.execute_script("return document.readyState === 'complete'")
+        )
+        return True
+    except TimeoutException:
+        log("⚠ 页面加载等待超时 (readyState not complete)")
+        return False
+
+
+def debug_extension_installation(driver):
+    """
+    3. 截图验证插件是否安装
+    """
+    try:
+        log("📸 正在检查插件安装情况 (chrome://extensions/)...")
+        driver.get("chrome://extensions/")
+        time.sleep(2) # 等待渲染
+        driver.save_screenshot("extensions.png")
+        log("📸 截图已保存至 extensions.png，请检查。")
+    except Exception as e:
+        log(f"⚠ 无法截取插件列表: {e}")
 
 
 def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
@@ -87,7 +119,6 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                 errors='ignore'
             )
             
-            output_lines = []
             start_time = time.time()
             captcha_ticket = None
             
@@ -102,11 +133,9 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                 try:
                     line = process.stdout.readline()
                     if line:
-                        output_lines.append(line)
                         if "SUCCESS: Obtained CaptchaTicket:" in line:
                             next_line = process.stdout.readline()
                             if next_line:
-                                output_lines.append(next_line)
                                 captcha_ticket = next_line.strip()
                                 log(f"✅ 成功获取 captchaTicket: {captcha_ticket[:20]}...")
                                 process.terminate()
@@ -230,7 +259,7 @@ def verify_login_on_member_page(driver, max_retries=3):
         log(f"🔍 验证登录状态 ({attempt + 1}/{max_retries})...")
         try:
             driver.get("https://member.jlc.com/")
-            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            wait_for_page_load(driver) # 增加等待
             time.sleep(5)
             page_source = driver.page_source
             if "客编" in page_source or "customerCode" in page_source:
@@ -268,33 +297,28 @@ def extract_and_visit_exam_iframe(driver):
     log("🔗 正在打开嘉立创中转页...")
     member_exam_url = "https://member.jlc.com/integrated/exam-center/intermediary?examinationRelationUrl=https%3A%2F%2Fexam.kaoshixing.com%2Fexam%2Fbefore_answer_notice%2F1647581&examinationRelationId=1647581"
     driver.get(member_exam_url)
+    wait_for_page_load(driver) # 增加等待
     
     log("⏳ 等待页面及 Iframe 加载 (20s)...")
     
-    # 尝试切换到 iframe 并等待按钮出现，确保 URL 已经跳转完毕
     try:
-        # 等待 iframe 元素出现
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
         
-        # 尝试切入 iframe
         if switch_to_exam_iframe(driver):
             log("✅ 已切入 Iframe，等待[开始答题]按钮出现以确认重定向完成...")
-            # 等待按钮出现，说明已经是 kaoshixing 的页面了
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.XPATH, '//*[@id="startExamBtn"] | //span[contains(text(), "开始答题")]'))
             )
             log("✅ 按钮已出现，提取真实 URL...")
             
-            # 提取当前 iframe 的真实 URL
             real_url = driver.execute_script("return window.location.href;")
-            
-            # 切回主文档
             driver.switch_to.default_content()
             
             if real_url and "kaoshixing.com" in real_url:
                 log(f"✅ 提取成功: {real_url}")
                 log("🚀 跳转到真实考试页面 (顶层窗口)...")
                 driver.get(real_url)
+                wait_for_page_load(driver) # 增加等待
                 return True
             else:
                 log(f"❌ 提取到的 URL 不正确: {real_url}")
@@ -303,10 +327,8 @@ def extract_and_visit_exam_iframe(driver):
             
     except Exception as e:
         log(f"❌ 提取 URL 过程超时或出错: {e}")
-        # 如果出错，打印一下源码看下
         try:
             driver.switch_to.default_content()
-            # print(driver.page_source[:500]) 
         except: pass
 
     return False
@@ -389,11 +411,12 @@ def wait_for_exam_completion(driver, timeout_seconds=180):
             
             if 'exam_start' in current_url:
                 if not exam_started:
-                    log("✅ 进入答题页面，给予插件 25秒 填写答案...")
+                    log("✅ 进入答题页面，等待插件运行...")
                     exam_started = True
                     exam_page_detected_time = time.time()
                 
-                if not python_submit_triggered and (time.time() - exam_page_detected_time > 25):
+                # 30秒后如果还没交卷，Python 主动介入
+                if not python_submit_triggered and (time.time() - exam_page_detected_time > 30):
                     force_submit_exam(driver)
                     python_submit_triggered = True 
         except UnexpectedAlertPresentException:
@@ -441,9 +464,14 @@ def process_single_account(username, password, account_index, total_accounts):
         driver = None
         try:
             log("🌐 启动浏览器...")
+            # 创建带插件的浏览器
             driver = create_chrome_driver(with_extension=True)
+            
+            # --- 3. 调试：验证插件安装 ---
+            debug_extension_installation(driver)
+            
             driver.get("https://passport.jlc.com")
-            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            wait_for_page_load(driver) # 等待加载
             
             if not perform_init_session(driver): raise Exception("初始化 Session 失败")
             captcha_ticket = call_aliv3min_with_timeout()
@@ -456,7 +484,7 @@ def process_single_account(username, password, account_index, total_accounts):
             
             for exam_retry in range(3):
                 log(f"📝 开始答题 ({exam_retry+1}/3)...")
-                # 1. 提取真实链接并跳转 (Wait until button visible inside iframe)
+                # 1. 提取真实链接并跳转
                 if not extract_and_visit_exam_iframe(driver):
                     log("❌ 无法提取考试页面 URL")
                     continue
