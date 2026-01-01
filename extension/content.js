@@ -1,17 +1,17 @@
 (function () {
     'use strict';
-    
-    console.log("✅✅✅ [Plugin] 插件脚本已注入！正在初始化...");
 
-    /* MD5 Implementation Start - 保持原样 */
+    /* MD5 Implementation Start */
     function safeAdd (x, y) {
         var lsw = (x & 0xffff) + (y & 0xffff)
         var msw = (x >> 16) + (y >> 16) + (lsw >> 16)
         return (msw << 16) | (lsw & 0xffff)
     }
+
     function bitRotateLeft (num, cnt) {
         return (num << cnt) | (num >>> (32 - cnt))
     }
+
     function md5cmn (q, a, b, x, s, t) {
         return safeAdd(bitRotateLeft(safeAdd(safeAdd(a, q), safeAdd(x, t)), s), b)
     }
@@ -27,6 +27,7 @@
     function md5ii (a, b, c, d, x, s, t) {
         return md5cmn(c ^ (b | ~d), a, b, x, s, t)
     }
+
     function binlMD5 (x, len) {
         x[len >> 5] |= 0x80 << (len % 32)
         x[((len + 64) >>> 9 << 4) + 14] = len
@@ -35,6 +36,7 @@
         var b = -271733879
         var c = -1732584194
         var d = 271733878
+
         for (i = 0; i < x.length; i += 16) {
             olda = a; oldb = b; oldc = c; oldd = d
             a = md5ff(a, b, c, d, x[i], 7, -680876936)
@@ -101,6 +103,7 @@
             d = md5ii(d, a, b, c, x[i + 11], 10, -1120210379)
             c = md5ii(c, d, a, b, x[i + 2], 15, 718787259)
             b = md5ii(b, c, d, a, x[i + 9], 21, -343485551)
+
             a = safeAdd(a, olda)
             b = safeAdd(b, oldb)
             c = safeAdd(c, oldc)
@@ -108,6 +111,7 @@
         }
         return [a, b, c, d]
     }
+
     function binl2rstr (input) {
         var i
         var output = ''
@@ -117,6 +121,7 @@
         }
         return output
     }
+
     function rstr2binl (input) {
         var i
         var output = []
@@ -130,9 +135,11 @@
         }
         return output
     }
+
     function rstrMD5 (s) {
         return binl2rstr(binlMD5(rstr2binl(s), s.length * 8))
     }
+
     function rstrHMACMD5 (key, data) {
         var i
         var bkey = rstr2binl(key)
@@ -150,6 +157,7 @@
         hash = binlMD5(ipad.concat(rstr2binl(data)), 512 + data.length * 8)
         return binl2rstr(binlMD5(opad.concat(hash), 512 + 128))
     }
+
     function rstr2hex (input) {
         var hexTab = '0123456789abcdef'
         var output = ''
@@ -161,9 +169,11 @@
         }
         return output
     }
+
     function str2rstrUTF8 (input) {
         return unescape(encodeURIComponent(input))
     }
+
     function rawMD5 (s) {
         return rstrMD5(str2rstrUTF8(s))
     }
@@ -176,6 +186,7 @@
     function hexHMACMD5 (k, d) {
         return rstr2hex(rawHMACMD5(k, d))
     }
+
     function md5 (string, key, raw) {
         if (!key) {
             if (!raw) {
@@ -188,6 +199,8 @@
         }
         return rawHMACMD5(key, string)
     }
+
+    // 挂载 md5 到 jQuery 对象 (如果有需要的话，原脚本是这样用的)
     if (typeof $ !== 'undefined') {
         $.md5 = md5;
     }
@@ -206,20 +219,12 @@
      * @returns
      */
     const renderResultInExamStartPage = async () => {
-        console.log("👉 [Plugin] 正在执行答题逻辑...");
-        
         // 当前页判断
         if (!location.href.includes('exam.kaoshixing.com/exam/exam_start')) {
-            console.log("❌ [Plugin] URL不匹配，跳过答题");
             return;
         }
-        
-        console.log("✅ [Plugin] 检测到答题页面，开始查找题目...");
-        
         // 库
         const md5DataList = getMD5DataList();
-        
-        let foundCount = 0;
 
         $('.question-content').find('.question-name .pre-wrap').each(function () {
             // 题干
@@ -243,7 +248,6 @@
                 // 判断题
                 if (['正确', '错误'].includes(text) && answerMD5List.includes(answerMD5)) {
                     $(this).find('span.words').click();
-                    foundCount++;
                 }
                 // 单选、多选
                 else {
@@ -253,18 +257,15 @@
                         let answerMD5 = md5(repalceText(text));
                         if (answerMD5List.includes(answerMD5)) {
                             $(this).find('span.words-option').click();
-                            foundCount++;
                         }
                     }
                     // 是否包含在正确答案中
                     if (answerMD5List.includes(answerMD5)) {
                         $(this).find('span.words-option').click();
-                        foundCount++;
                     }
                 }
             });
         });
-        console.log(`✅ [Plugin] 自动勾选了 ${foundCount} 个答案`);
     }
 
     //生成从minNum到maxNum的随机数
@@ -283,7 +284,6 @@
      * 未查询到的答案 随机选择
      */
     const rednerNotFindQuestion = () => {
-        console.log("🎲 [Plugin] 开始随机填充未知题目...");
         setInterval(() => {
             $('div.question-content[data-commit="false"]').each(function () {
                 $(this).find(`span.words-option:eq(${randomNum(0, 3)})`).click()
@@ -292,11 +292,47 @@
         }, 1000);
     }
 
+    /**
+     * 交卷按钮控制， 自动提交试卷
+     */
+    const buttonControl = () => {
+        if ($('#endExamBtn').length === 0) {
+            return;
+        }
+        // 取随机交卷时间
+        // 30、60 是随机交卷时间：30秒到60秒之间，可以根据自己的需求修改。
+        const second = randomNum(10, 20) * 1000;
+        let sencond2 = second;
+
+        let timeoutTask = setInterval(() => {
+            // .attr('disabled', true)
+            sencond2 = sencond2 - 1000;
+            $('#endExamBtn').css({
+                padding: '10px 0px'
+            }).text(`自动交卷倒计时${sencond2 / 1000}秒`);
+            // 去除定时
+            if ((sencond2 / 1000) <= 0) {
+                timeoutTask = null;
+                clearInterval(timeoutTask);
+                $('#endExamBtn').css({
+                    padding: '10px 28px'
+                }).attr('disabled', false).text('提交试卷');
+            }
+        }, 1000);
+
+        // 交卷
+        setTimeout(() => {
+            $('#endExamBtn').click();
+            $('#confirmEndExamBtn').click();
+        }, second + 1000);
+    }
+
     // 确保DOM加载完成后执行
     $(document).ready(function() {
-        console.log("🚀 [Plugin] DOM Ready! Starting execution...");
         renderResultInExamStartPage();
         rednerNotFindQuestion();
+        // 不要自动交卷，把下面这行删掉
+        buttonControl();
     });
 
 })();
