@@ -381,8 +381,6 @@ def handle_possible_alerts(driver):
     except NoAlertPresentException:
         return False
     except Exception as e:
-        # 记录其他异常但防止报错中断
-        # log(f"处理弹窗时发生异常: {e}")
         return False
 
 
@@ -408,45 +406,36 @@ def wait_for_exam_completion(driver, timeout_seconds=180):
             # 3. 获取当前 Iframe 内部的 URL
             current_inner_url = driver.execute_script("return window.location.href;")
             
-            # 4. 定期输出状态 (每10秒)
-            if time.time() - last_log_time > 10:
-                log(f"ℹ 当前答题页面状态: {current_inner_url.split('?')[0]}")
+            # 4. 定期输出状态 (每15秒)
+            if time.time() - last_log_time > 15:
+                log(f"ℹ 插件运行中... 当前页面: {current_inner_url.split('?')[0]}")
                 last_log_time = time.time()
             
-            # 5. 阶段判断
+            # 5. 阶段判断 - 仅通过 URL 判断
             if not exam_started:
                 # 检查是否进入答题页
                 if 'exam_start' in current_inner_url:
-                    log("✅ 组卷完成，进入答题页面，等待插件运行...")
+                    log("✅ 进入答题页面，插件开始自动答题...")
                     exam_started = True
-                elif 'result' in current_inner_url or 'score' in current_inner_url:
+                elif '/result/' in current_inner_url:
                     log(f"✅ 直接跳转到了结果页: {current_inner_url}")
                     return True
             else:
-                # 检查是否进入结果页
-                if 'result' in current_inner_url or 'score' in current_inner_url:
+                # 检查是否进入结果页 - 必须包含 /result/
+                if '/result/' in current_inner_url:
                     log(f"✅ 答题结束，跳转至结果页: {current_inner_url}")
                     return True
-                
-                # 额外检查：有没有出现“分数”元素 (有时URL还没变DOM已经变了)
-                try:
-                    if driver.find_elements(By.CLASS_NAME, "score") or \
-                       driver.find_elements(By.XPATH, '//*[contains(text(), "分数")]'):
-                        log("✅ 检测到分数元素，视为答题结束")
-                        return True
-                except:
-                    pass
             
         except UnexpectedAlertPresentException:
             # 捕捉在执行JS时突然出现的弹窗
             handle_possible_alerts(driver)
         except Exception as e:
-            # 页面跳转期间可能会抛出 StaleElementReferenceException 或其他异常，忽略并重试
+            # 页面跳转期间可能会抛出异常，忽略并重试
             time.sleep(1)
             
         time.sleep(2)
     
-    log("⏰ 等待超时，未检测到结果页")
+    log("⏰ 等待超时，未检测到结果页 URL")
     return False
 
 
@@ -473,7 +462,7 @@ def get_exam_score(driver):
         except:
             pass
         
-        # 方式 2: 页面源码正则提取 (作为备用)
+        # 方式 2: 页面源码正则提取
         page_source = driver.page_source
         match = re.search(r'class=["\']score["\'][^>]*>(\d+)', page_source)
         if match:
@@ -481,17 +470,6 @@ def get_exam_score(driver):
             log(f"📊 提取到分数 (Regex): {score}")
             return score
             
-        # 方式 3: 找包含"分数"的文本
-        try:
-            score_text_elem = driver.find_element(By.XPATH, "//*[contains(text(), '分数') or contains(text(), '得分')]")
-            full_text = score_text_elem.text
-            # 提取数字
-            score = int(re.search(r'\d+', full_text).group())
-            log(f"📊 提取到分数 (Text): {score}")
-            return score
-        except:
-            pass
-
     except Exception as e:
         log(f"❌ 获取分数失败: {e}")
     return None
