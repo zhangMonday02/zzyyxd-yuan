@@ -412,7 +412,7 @@ def process_single_account(username, password, account_index, total_accounts):
     
     try:
         log(f"🌐 启动浏览器 (账号 {account_index})...")
-        driver = create_chrome_driver(with_extension=False) # 不加载插件
+        driver = create_chrome_driver() # 修正：这里不再传递参数
         
         # 登录流程
         driver.get("https://passport.jlc.com")
