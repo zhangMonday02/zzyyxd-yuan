@@ -55,66 +55,69 @@ def get_captcha_ticket():
     调用 AliV3min.py 获取 captchaTicket
     """
     log("正在调用 AliV3min.py 获取验证码...")
-    start_time = time.time()
     
     # 获取当前脚本所在的绝对路径目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
     try:
-        # 关键修改：cwd=current_dir 确保子进程在正确目录下运行，能找到 sign.js 等文件
+        # 使用 communicate() 替代 readline()，防止死锁卡顿
+        # 传递 env=os.environ 确保子进程能找到 node 环境
         process = subprocess.Popen(
             [sys.executable, 'AliV3min.py'],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.STDOUT, # 将错误也输出到标准输出方便抓取
             text=True,
             encoding='utf-8',
             errors='ignore',
-            cwd=current_dir  # 强制工作目录
+            cwd=current_dir,  # 强制工作目录
+            env=os.environ    # 继承环境变量
         )
         
-        full_output = ""
-        ticket = None
+        # 等待进程结束并获取所有输出，设置超时时间为 180秒
+        stdout_data, _ = process.communicate(timeout=180)
         
-        while True:
-            # 检查超时
-            if time.time() - start_time > 180: # 3分钟超时
-                process.kill()
-                log("AliV3min.py 运行超时 (3分钟)")
-                # 仅在调试时打印详细日志，避免泄露过多信息，这里选择不打印
-                return None
-
-            line = process.stdout.readline()
-            if not line and process.poll() is not None:
-                break
-            
-            if line:
-                full_output += line
-                line = line.strip()
-                # 尝试解析 JSON 寻找 ticket
-                if '"captchaTicket":' in line:
-                    try:
-                        # 尝试提取 json 部分
-                        json_str = line[line.find('{'):line.rfind('}')+1]
+        ticket = None
+        # 分析输出内容
+        lines = stdout_data.split('\n')
+        for line in lines:
+            line = line.strip()
+            # 1. 尝试解析 JSON 寻找 ticket
+            if '"captchaTicket":' in line:
+                try:
+                    # 尝试提取 json 部分
+                    start_idx = line.find('{')
+                    end_idx = line.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        json_str = line[start_idx:end_idx+1]
                         data = json.loads(json_str)
-                        if data.get('success') and 'data' in data:
-                            ticket = data['data'].get('captchaTicket')
-                    except:
-                        pass
-                # 兼容日志直接输出 Ticket 的情况
-                if len(line) == 32 and all(c in '0123456789abcdef' for c in line):
-                     ticket = line
+                        if isinstance(data, dict):
+                            # 路径可能在 data.captchaTicket 或 data.data.captchaTicket
+                            if 'captchaTicket' in data:
+                                ticket = data['captchaTicket']
+                            elif 'data' in data and isinstance(data['data'], dict):
+                                ticket = data['data'].get('captchaTicket')
+                except:
+                    pass
+            
+            # 2. 兼容 AliV3min 直接打印纯 Ticket 的情况 (32位字符)
+            if not ticket and len(line) == 32 and all(c in '0123456789abcdef' for c in line):
+                 ticket = line
 
         if ticket:
             log(f"SUCCESS: Obtained CaptchaTicket:\n{ticket}")
             return ticket
         else:
             log("AliV3min.py 未能返回有效的 captchaTicket")
-            # 如果失败，打印日志以便排查（此时不包含敏感账号信息）
-            print("--- AliV3min Output Log ---")
-            print(full_output)
-            print("---------------------------")
+            # 只有失败时才打印部分日志供调试
+            print("--- AliV3min Log (Last 500 chars) ---")
+            print(stdout_data[-500:])
+            print("-------------------------------------")
             return None
 
+    except subprocess.TimeoutExpired:
+        process.kill()
+        log("AliV3min.py 运行超时 (3分钟)，已强制结束")
+        return None
     except Exception as e:
         log(f"调用 AliV3min.py 发生异常: {e}")
         return None
@@ -123,7 +126,6 @@ def process_account(account_idx, username, password, fail_exit_enabled):
     """
     单个账号的处理流程
     """
-    # 日志仅显示序号
     log(f"=== 开始处理第 {account_idx} 个账号 ===")
     
     chrome_options = Options()
@@ -240,7 +242,6 @@ def process_account(account_idx, username, password, fail_exit_enabled):
                 
                 page_source = driver.page_source
                 if "客编" in page_source:
-                    # 尝试提取客编数字部分用于日志（脱敏处理，只记录找到了）
                     log("验证成功: 页面包含'客编'")
                     verify_success = True
                     break
@@ -355,7 +356,7 @@ def main():
         pwd = pwds[i].strip()
         if not user: continue
         
-        # 传递 i+1 作为序号，不打印 user
+        # 传递 i+1 作为序号，不传递真实账号
         success, msg = process_account(i+1, user, pwd, fail_exit_flag)
         results.append({
             "index": i+1,
