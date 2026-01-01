@@ -155,7 +155,9 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
 
 
 def send_request_via_browser(driver, url, method='POST', body=None):
-    """通过浏览器控制台发送请求"""
+    """
+    通过浏览器控制台发送请求
+    """
     try:
         if body:
             body_str = json.dumps(body, ensure_ascii=False)
@@ -300,10 +302,6 @@ def click_start_exam_button(driver, max_retries=3):
     for attempt in range(max_retries):
         log(f"🔍 查找开始答题按钮 ({attempt + 1}/{max_retries})...")
         try:
-            # 确保页面加载
-            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-            time.sleep(3)
-            
             # 尝试多种定位方式
             xpaths = [
                 '//*[@id="startExamBtn"]',
@@ -325,21 +323,26 @@ def click_start_exam_button(driver, max_retries=3):
                     continue
             
             # 如果没找到，打印调试信息
-            log(f"⚠ 未找到开始按钮。当前页面信息:")
-            log(f"  URL: {driver.current_url}")
-            log(f"  标题: {driver.title}")
-            # 只截取部分源码防止日志过长
-            html_snippet = driver.page_source[:2000]
-            log(f"  源码前2000字符: {html_snippet}")
-            
+            log("⚠ 未找到按钮")
+                    
         except Exception as e:
             log(f"⚠ 查找按钮出错: {e}")
             
         if attempt < max_retries - 1:
             log("🔄 刷新页面重试...")
             driver.refresh()
-            time.sleep(5) # 刷新后多等待一会
-            
+            time.sleep(5)
+    
+    # 所有重试都失败，输出详细调试信息
+    log("❌ 最终未找到开始答题按钮，输出调试信息:")
+    log(f"👉 Current URL: {driver.current_url}")
+    log(f"👉 Page Title: {driver.title}")
+    try:
+        html_source = driver.page_source
+        log(f"👉 HTML Source (前5000字符):\n{html_source[:5000]}")
+    except:
+        log("👉 HTML Source 获取失败")
+
     return False
 
 
@@ -352,7 +355,6 @@ def wait_for_exam_completion(driver, timeout_seconds=180):
     while time.time() - start_time < timeout_seconds:
         try:
             current_url = driver.current_url
-            # 只要URL变了，且包含结果页特征
             if current_url != initial_url and ('result' in current_url or 'score' in current_url):
                 log(f"✅ 检测到跳转至结果页: {current_url}")
                 return True
@@ -371,7 +373,6 @@ def get_exam_score(driver):
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(2)
         
-        # 尝试从页面源码正则提取
         page_source = driver.page_source
         match = re.search(r'class="score"[^>]*>(\d+)', page_source)
         if match:
@@ -379,7 +380,6 @@ def get_exam_score(driver):
             log(f"📊 提取到分数: {score}")
             return score
             
-        # 尝试元素查找
         try:
             elem = driver.find_element(By.CLASS_NAME, "score")
             return int(re.search(r'\d+', elem.text).group())
@@ -411,24 +411,19 @@ def process_single_account(username, password, account_index, total_accounts):
             
         driver = None
         try:
-            # 1. 启动浏览器 (带插件 + 防检测)
             log("🌐 启动浏览器...")
             driver = create_chrome_driver(with_extension=True)
             
-            # 2. 打开页面
             driver.get("https://passport.jlc.com")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
-            # 3. 初始化 Session
             if not perform_init_session(driver):
                 raise Exception("初始化 Session 失败")
             
-            # 4. 获取 Ticket
             captcha_ticket = call_aliv3min_with_timeout()
             if not captcha_ticket:
                 raise Exception("获取 CaptchaTicket 失败")
             
-            # 5. 登录
             status, login_res = login_with_password(driver, username, password, captcha_ticket)
             
             if status == 'password_error':
@@ -439,29 +434,32 @@ def process_single_account(username, password, account_index, total_accounts):
             if status != 'success':
                 raise Exception(f"登录失败: {login_res}")
                 
-            # 6. 验证登录
             if not verify_login_on_member_page(driver):
                 raise Exception("登录验证失败 (未找到客编)")
                 
-            # 7. 答题流程
+            # 答题流程
             exam_url = "https://member.jlc.com/integrated/exam-center/intermediary?examinationRelationUrl=https%3A%2F%2Fexam.kaoshixing.com%2Fexam%2Fbefore_answer_notice%2F1647581&examinationRelationId=1647581"
             
             for exam_retry in range(3):
                 log(f"📝 开始答题 ({exam_retry+1}/3)...")
+                
+                # 1. 打开 URL
                 driver.get(exam_url)
                 
-                # 点击开始
+                # 2. 硬性等待 15 秒 (修复点)
+                log("⏳ 等待页面加载和重定向 (硬性等待 15s)...")
+                time.sleep(15)
+                
+                # 3. 查找并点击按钮
                 if not click_start_exam_button(driver):
                     log("❌ 找不到开始按钮，刷新重试")
                     continue
                     
-                # 等待完成
                 if not wait_for_exam_completion(driver):
                     log("❌ 答题超时")
                     result['failure_reason'] = '脚本超过3分钟未执行成功'
                     continue
                     
-                # 获取分数
                 score = get_exam_score(driver)
                 if score is not None:
                     result['score'] = score
@@ -513,7 +511,6 @@ def main():
         if i < len(usernames):
             time.sleep(5)
             
-    # 总结
     log("\n" + "="*40)
     log("📊 最终结果总结")
     log("="*40)
