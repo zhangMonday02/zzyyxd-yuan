@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "立创答题",
+  "version": "1.2.2",
+  "description": "Auto Answer By zhangMonday",
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://exam.kaoshixing.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://exam.kaoshixing.com/exam/exam_start/*"],
+      "js": ["jquery.min.js", "content.js"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ]
+}
