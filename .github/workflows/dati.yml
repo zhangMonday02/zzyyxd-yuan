@@ -1,7 +1,10 @@
-name: 测试：aliv3
+name: 嘉立创自动答题
 
 on:
   workflow_dispatch:  # 手动触发
+  schedule:
+  - cron: '0 4 15 */1 *'  # 每月15日 北京时间12:00 运行
+
 
 jobs:
   running:
@@ -21,6 +24,16 @@ jobs:
         with:
           node-version: '18'
 
+      - name: '设置时区为北京时间'
+        run: |
+          sudo timedatectl set-timezone Asia/Shanghai
+          echo "当前时间: $(date)"
+
+      - name: '下载中文字体'
+        run: |
+           sudo apt-get update
+           sudo apt-get install -y fonts-wqy-zenhei
+
       - name: '安装依赖'
         run: |
           pip install --upgrade pip
@@ -30,6 +43,6 @@ jobs:
       - name: '准备Chrome驱动'
         uses: nanasess/setup-chromedriver@v2
 
-      - name: '测试aliv3'
+      - name: '进行自动答题流程(日志在这里看)'
         run: |
-          python ./AliV3min.py
+          python ./dati.py "${{ secrets.JLC_USERNAME }}" "${{ secrets.JLC_PASSWORD }}" "${{ secrets.ERROR }}"
