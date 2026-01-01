@@ -11,6 +11,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoAlertPresentException, UnexpectedAlertPresentException
 
 # 导入SM2加密方法
 try:
@@ -307,19 +308,21 @@ def switch_to_exam_iframe(driver):
     尝试切换到答题系统的iframe
     """
     try:
+        # 切回主文档，防止嵌套查找错误
+        driver.switch_to.default_content()
+        
         # 优先尝试 id="client_context_frame"
         iframe = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.ID, "client_context_frame"))
         )
         driver.switch_to.frame(iframe)
-        # log("✅ 已切换到答题 Iframe (client_context_frame)")
         return True
     except:
         try:
+            driver.switch_to.default_content()
             # 备用尝试 name="context_iframe"
             iframe = driver.find_element(By.NAME, "context_iframe")
             driver.switch_to.frame(iframe)
-            # log("✅ 已切换到答题 Iframe (context_iframe)")
             return True
         except:
             pass
@@ -361,59 +364,87 @@ def click_start_exam_button(driver):
             continue
     
     if not found:
-        # 切回主文档再试一次（以防万一）
-        driver.switch_to.default_content()
         log("❌ 未找到开始答题按钮")
-        # 调试信息
-        log(f"📍 当前URL: {driver.current_url}")
-        log(f"📄 页面标题: {driver.title}")
         return False
         
     return True
 
 
+def handle_possible_alerts(driver):
+    """处理可能出现的弹窗 (Alert/Confirm)"""
+    try:
+        # 尝试切换到 Alert
+        alert = driver.switch_to.alert
+        log(f"⚠ 检测到弹窗: {alert.text}，正在接受...")
+        alert.accept()
+        return True
+    except NoAlertPresentException:
+        return False
+    except Exception as e:
+        # 记录其他异常但防止报错中断
+        # log(f"处理弹窗时发生异常: {e}")
+        return False
+
+
 def wait_for_exam_completion(driver, timeout_seconds=180):
     """
-    等待答题完成
-    流程: Start -> exam_start (答题页) -> result (分数页)
+    等待答题完成 (exam_start -> result)
+    增加对弹窗的处理和实时日志输出
     """
     log(f"⏳ 等待答题流程 (最长 {timeout_seconds}s)...")
     start_time = time.time()
+    last_log_time = start_time
     
     exam_started = False
     
     while time.time() - start_time < timeout_seconds:
+        # 1. 优先处理弹窗 (这是最可能的卡死原因)
+        handle_possible_alerts(driver)
+        
         try:
-            # 必须持续确保在 iframe 里，因为页面跳转可能重置上下文
+            # 2. 刷新 Iframe 上下文 (页面跳转后旧的 iframe 引用会失效)
             switch_to_exam_iframe(driver)
             
-            # 获取当前 iframe 内部的 URL
+            # 3. 获取当前 Iframe 内部的 URL
             current_inner_url = driver.execute_script("return window.location.href;")
             
-            # 阶段 1: 组卷完成，进入答题页面
-            if not exam_started:
-                if 'exam_start' in current_inner_url:
-                    log("✅ 组卷完成，进入答题页面，插件开始运行...")
-                    exam_started = True
-                elif 'result' in current_inner_url:
-                    # 直接跳到了结果页（可能是复卷？）
-                    log("✅ 直接跳转到了结果页")
-                    return True
-                else:
-                    # 还在 notice 页面或 loading
-                    pass
+            # 4. 定期输出状态 (每10秒)
+            if time.time() - last_log_time > 10:
+                log(f"ℹ 当前答题页面状态: {current_inner_url.split('?')[0]}")
+                last_log_time = time.time()
             
-            # 阶段 2: 答题完成，进入结果页面
+            # 5. 阶段判断
+            if not exam_started:
+                # 检查是否进入答题页
+                if 'exam_start' in current_inner_url:
+                    log("✅ 组卷完成，进入答题页面，等待插件运行...")
+                    exam_started = True
+                elif 'result' in current_inner_url or 'score' in current_inner_url:
+                    log(f"✅ 直接跳转到了结果页: {current_inner_url}")
+                    return True
             else:
+                # 检查是否进入结果页
                 if 'result' in current_inner_url or 'score' in current_inner_url:
                     log(f"✅ 答题结束，跳转至结果页: {current_inner_url}")
                     return True
+                
+                # 额外检查：有没有出现“分数”元素 (有时URL还没变DOM已经变了)
+                try:
+                    if driver.find_elements(By.CLASS_NAME, "score") or \
+                       driver.find_elements(By.XPATH, '//*[contains(text(), "分数")]'):
+                        log("✅ 检测到分数元素，视为答题结束")
+                        return True
+                except:
+                    pass
             
+        except UnexpectedAlertPresentException:
+            # 捕捉在执行JS时突然出现的弹窗
+            handle_possible_alerts(driver)
         except Exception as e:
-            # 发生异常（如 iframe 正在刷新），稍作等待
-            pass
+            # 页面跳转期间可能会抛出 StaleElementReferenceException 或其他异常，忽略并重试
+            time.sleep(1)
             
-        time.sleep(3)
+        time.sleep(2)
     
     log("⏰ 等待超时，未检测到结果页")
     return False
@@ -432,7 +463,6 @@ def get_exam_score(driver):
         
         # 方式 1: 直接找 class="score" 元素
         try:
-            # 显式等待 score 元素出现
             score_elem = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "score"))
             )
@@ -443,7 +473,7 @@ def get_exam_score(driver):
         except:
             pass
         
-        # 方式 2: 页面源码正则提取
+        # 方式 2: 页面源码正则提取 (作为备用)
         page_source = driver.page_source
         match = re.search(r'class=["\']score["\'][^>]*>(\d+)', page_source)
         if match:
@@ -451,6 +481,17 @@ def get_exam_score(driver):
             log(f"📊 提取到分数 (Regex): {score}")
             return score
             
+        # 方式 3: 找包含"分数"的文本
+        try:
+            score_text_elem = driver.find_element(By.XPATH, "//*[contains(text(), '分数') or contains(text(), '得分')]")
+            full_text = score_text_elem.text
+            # 提取数字
+            score = int(re.search(r'\d+', full_text).group())
+            log(f"📊 提取到分数 (Text): {score}")
+            return score
+        except:
+            pass
+
     except Exception as e:
         log(f"❌ 获取分数失败: {e}")
     return None
