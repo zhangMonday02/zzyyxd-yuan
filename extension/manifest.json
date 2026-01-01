@@ -1,19 +1,19 @@
 {
-  "manifest_version": 3,
-  "name": "立创答题1.2.1",
+  "manifest_version": 2,
+  "name": "立创答题",
   "version": "1.2.1",
-  "description": "嘉立创题库答题脚本 打包 By zhangMonday",
+  "description": "嘉立创题库答题脚本 打包By zhangMonday",
+
   "permissions": [
-    "activeTab"
+    "https://exam.kaoshixing.com/*",
+    "tabs"
   ],
-  "host_permissions": [
-    "https://exam.kaoshixing.com/*"
-  ],
+
   "content_scripts": [
     {
-      "matches": ["https://exam.kaoshixing.com/exam/exam_start/*"],
+      "matches": ["https://exam.kaoshixing.com/*"],
       "js": ["jquery.min.js", "content.js"],
-      "run_at": "document_end",
+      "run_at": "document_idle",
       "all_frames": true
     }
   ]
