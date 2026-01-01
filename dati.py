@@ -34,10 +34,10 @@ def create_chrome_driver(with_extension=True):
     chrome_options = Options()
     
     # --- 防检测核心配置 ---
-    # 1. 使用新版无头模式 (更像真实浏览器)
+    # 1. 使用新版无头模式
     chrome_options.add_argument("--headless=new") 
     
-    # 2. 伪造 User-Agent (与 AliV3.py 保持一致或使用最新版)
+    # 2. 伪造 User-Agent
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     # 3. 禁用自动化控制特征
@@ -64,7 +64,6 @@ def create_chrome_driver(with_extension=True):
     driver = webdriver.Chrome(options=chrome_options)
     
     # --- CDP 命令防检测 (关键) ---
-    # 在页面加载前执行 JS，抹除 webdriver 属性
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": """
             Object.defineProperty(navigator, 'webdriver', {
@@ -84,7 +83,6 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
         log(f"📞 调用 AliV3min.py 获取 captchaTicket (尝试 {attempt + 1}/{max_retries})...")
         
         try:
-            # 确保当前目录下有 AliV3min.py
             if not os.path.exists('AliV3min.py'):
                 log("❌ 错误: 找不到 AliV3min.py")
                 return None
@@ -98,12 +96,10 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                 errors='ignore'
             )
             
-            output_lines = []
             start_time = time.time()
             captcha_ticket = None
             
             while True:
-                # 检查超时
                 elapsed = time.time() - start_time
                 if elapsed > timeout_seconds:
                     log(f"⏰ AliV3min.py 超过 {timeout_seconds} 秒未完成，强制终止...")
@@ -111,29 +107,19 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                     process.wait()
                     break
                 
-                # 非阻塞读取输出
                 try:
                     line = process.stdout.readline()
                     if line:
-                        output_lines.append(line)
-                        # 实时打印子进程输出 (调试用，可注释)
-                        # print(f"  [AliV3min] {line.rstrip()}")
-                        
-                        # 优先匹配 "SUCCESS: Obtained CaptchaTicket:"
                         if "SUCCESS: Obtained CaptchaTicket:" in line:
-                            # 尝试读取下一行
                             next_line = process.stdout.readline()
                             if next_line:
-                                output_lines.append(next_line)
                                 captcha_ticket = next_line.strip()
                                 log(f"✅ 成功获取 captchaTicket: {captcha_ticket[:20]}...")
-                                process.terminate() # 拿到结果就结束进程
+                                process.terminate()
                                 return captcha_ticket
 
-                        # 其次匹配 JSON 中的 captchaTicket
                         if "captchaTicket" in line:
                             try:
-                                # 查找 "captchaTicket":"xxxxx" 模式
                                 match = re.search(r'"captchaTicket"\s*:\s*"([^"]+)"', line)
                                 if match:
                                     captcha_ticket = match.group(1)
@@ -143,9 +129,7 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                             except:
                                 pass
                     
-                    # 检查进程是否结束
                     if process.poll() is not None:
-                        # 读取剩余内容
                         remaining = process.stdout.read()
                         if remaining:
                             if "captchaTicket" in remaining:
@@ -171,14 +155,10 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
 
 
 def send_request_via_browser(driver, url, method='POST', body=None):
-    """
-    通过浏览器控制台发送请求
-    """
+    """通过浏览器控制台发送请求"""
     try:
-        # 构造 Fetch 请求
         if body:
             body_str = json.dumps(body, ensure_ascii=False)
-            # 注意：headers 尽量模拟 AliV3.py 的请求头
             js_code = """
             var url = arguments[0];
             var bodyData = arguments[1];
@@ -197,7 +177,6 @@ def send_request_via_browser(driver, url, method='POST', body=None):
             })
             .then(response => {
                 if (!response.ok) {
-                    // 如果不是 2xx，尝试读取文本看是否是 HTML 报错
                     return response.text().then(text => {
                         try {
                             return JSON.stringify({error: "HTTP Error " + response.status, body: text});
@@ -231,7 +210,6 @@ def send_request_via_browser(driver, url, method='POST', body=None):
             """
             result = driver.execute_async_script(js_code, url)
         
-        # 尝试解析返回的 JSON 字符串
         try:
             return json.loads(result)
         except json.JSONDecodeError:
@@ -305,7 +283,7 @@ def verify_login_on_member_page(driver, max_retries=3):
         try:
             driver.get("https://member.jlc.com/")
             WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-            time.sleep(5) # 硬性等待
+            time.sleep(5) 
             
             page_source = driver.page_source
             if "客编" in page_source or "customerCode" in page_source:
@@ -322,7 +300,10 @@ def click_start_exam_button(driver, max_retries=3):
     for attempt in range(max_retries):
         log(f"🔍 查找开始答题按钮 ({attempt + 1}/{max_retries})...")
         try:
+            # 确保页面加载
+            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             time.sleep(3)
+            
             # 尝试多种定位方式
             xpaths = [
                 '//*[@id="startExamBtn"]',
@@ -334,7 +315,6 @@ def click_start_exam_button(driver, max_retries=3):
                 try:
                     elem = driver.find_element(By.XPATH, xpath)
                     if elem.is_displayed():
-                        # 尝试点击父元素或元素本身
                         try:
                             elem.click()
                         except:
@@ -343,13 +323,23 @@ def click_start_exam_button(driver, max_retries=3):
                         return True
                 except:
                     continue
-                    
+            
+            # 如果没找到，打印调试信息
+            log(f"⚠ 未找到开始按钮。当前页面信息:")
+            log(f"  URL: {driver.current_url}")
+            log(f"  标题: {driver.title}")
+            # 只截取部分源码防止日志过长
+            html_snippet = driver.page_source[:2000]
+            log(f"  源码前2000字符: {html_snippet}")
+            
         except Exception as e:
             log(f"⚠ 查找按钮出错: {e}")
             
         if attempt < max_retries - 1:
+            log("🔄 刷新页面重试...")
             driver.refresh()
-            time.sleep(3)
+            time.sleep(5) # 刷新后多等待一会
+            
     return False
 
 
@@ -413,7 +403,6 @@ def process_single_account(username, password, account_index, total_accounts):
         'failure_reason': None
     }
     
-    # 整个流程重试 (登录+答题)
     max_process_retries = 3
     
     for process_attempt in range(max_process_retries):
@@ -430,22 +419,22 @@ def process_single_account(username, password, account_index, total_accounts):
             driver.get("https://passport.jlc.com")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
-            # 3. 初始化 Session (获取 lsId Cookie)
+            # 3. 初始化 Session
             if not perform_init_session(driver):
                 raise Exception("初始化 Session 失败")
             
-            # 4. 保持浏览器开启，调用外部脚本获取 Ticket
+            # 4. 获取 Ticket
             captcha_ticket = call_aliv3min_with_timeout()
             if not captcha_ticket:
                 raise Exception("获取 CaptchaTicket 失败")
             
-            # 5. 登录 (使用 Browser Fetch)
+            # 5. 登录
             status, login_res = login_with_password(driver, username, password, captcha_ticket)
             
             if status == 'password_error':
                 result['status'] = '密码错误'
                 result['failure_reason'] = '账号或密码不正确'
-                return result # 密码错误不重试
+                return result
                 
             if status != 'success':
                 raise Exception(f"登录失败: {login_res}")
@@ -454,7 +443,7 @@ def process_single_account(username, password, account_index, total_accounts):
             if not verify_login_on_member_page(driver):
                 raise Exception("登录验证失败 (未找到客编)")
                 
-            # 7. 答题流程 (内部循环重试)
+            # 7. 答题流程
             exam_url = "https://member.jlc.com/integrated/exam-center/intermediary?examinationRelationUrl=https%3A%2F%2Fexam.kaoshixing.com%2Fexam%2Fbefore_answer_notice%2F1647581&examinationRelationId=1647581"
             
             for exam_retry in range(3):
@@ -488,7 +477,6 @@ def process_single_account(username, password, account_index, total_accounts):
                         log(f"😢 分数未达标: {score}")
                         result['failure_reason'] = f"最高得分{result['highest_score']}"
                 
-            # 答题循环结束仍未成功
             raise Exception("答题多次未通过或超时")
 
         except Exception as e:
