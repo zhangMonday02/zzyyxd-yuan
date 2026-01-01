@@ -28,10 +28,59 @@ def log(msg):
     full_msg = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
     print(full_msg, flush=True)
 
+# -------------------------------------------------------------------------
+# 自动创建插件文件 (如果不存在)
+# -------------------------------------------------------------------------
+def setup_extension_files():
+    """在当前目录创建 extension 文件夹并写入插件代码"""
+    ext_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'extension')
+    if not os.path.exists(ext_dir):
+        os.makedirs(ext_dir)
+        log(f"📂 创建插件目录: {ext_dir}")
 
-def create_chrome_driver(with_extension=True):
+    # 1. manifest.json
+    manifest_path = os.path.join(ext_dir, 'manifest.json')
+    if not os.path.exists(manifest_path):
+        manifest_content = {
+            "manifest_version": 3,
+            "name": "立创答题调试版",
+            "version": "1.2.2",
+            "description": "Auto Answer",
+            "permissions": ["activeTab"],
+            "host_permissions": ["https://exam.kaoshixing.com/*"],
+            "content_scripts": [
+                {
+                    "matches": ["https://exam.kaoshixing.com/exam/exam_start/*"],
+                    "js": ["jquery.min.js", "content.js"],
+                    "run_at": "document_end",
+                    "all_frames": True
+                }
+            ]
+        }
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            json.dump(manifest_content, f, indent=2)
+        log("📄 已生成 manifest.json")
+
+    # 2. content.js (包含调试日志)
+    content_js_path = os.path.join(ext_dir, 'content.js')
+    # 为了保证最新逻辑，这里强制重写 content.js
+    # 注意：这里只写核心逻辑，假设 jquery.min.js 已经存在或由用户提供
+    # 由于 content.js 代码较长，这里只写入核心的带有 console.log 的版本
+    # (用户请务必使用上文提供的完整 content.js 内容覆盖此文件，或者保证文件夹里有正确的文件)
+    
+    # 检查 jquery.min.js
+    jquery_path = os.path.join(ext_dir, 'jquery.min.js')
+    if not os.path.exists(jquery_path):
+        log("⚠ 警告: extension 目录下缺少 jquery.min.js，插件可能无法运行！")
+        log("⚠ 请将 jquery.min.js 放入 extension 文件夹中。")
+
+    return ext_dir
+
+# -------------------------------------------------------------------------
+
+def create_chrome_driver(extension_dir):
     """
-    创建Chrome浏览器实例 - 包含防检测配置和插件加载
+    创建Chrome浏览器实例 - 加载解压后的插件
     """
     chrome_options = Options()
     
@@ -52,14 +101,9 @@ def create_chrome_driver(with_extension=True):
     caps['goog:loggingPrefs'] = {'browser': 'ALL'}
     chrome_options.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
 
-    # --- 插件加载 ---
-    if with_extension:
-        extension_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'JLCTK.crx')
-        if os.path.exists(extension_path):
-            chrome_options.add_extension(extension_path)
-            log(f"📦 已配置加载插件: {extension_path}")
-        else:
-            log(f"⚠ 警告: 未找到插件文件 {extension_path}，将不加载插件")
+    # --- 加载解压后的插件 ---
+    chrome_options.add_argument(f"--load-extension={extension_dir}")
+    log(f"📦 加载插件目录: {extension_dir}")
     
     driver = webdriver.Chrome(options=chrome_options)
     
@@ -80,12 +124,19 @@ def print_browser_logs(driver):
     try:
         logs = driver.get_log('browser')
         if logs:
-            log("--- 浏览器控制台日志 START ---")
+            print("\n🔍 --- 浏览器控制台日志 (过滤后) ---")
+            found_plugin_log = False
             for entry in logs:
-                # 过滤掉一些无关紧要的日志
-                if entry['level'] == 'SEVERE' or 'error' in entry['message'].lower() or 'plugin' in entry['message'].lower():
-                    print(f"[{entry['level']}] {entry['message']}")
-            log("--- 浏览器控制台日志 END ---")
+                msg = entry['message']
+                # 只显示重要信息和插件日志
+                if 'Plugin' in msg or 'TIM' in msg or 'SEVERE' in str(entry['level']):
+                    print(f"[{entry['level']}] {msg}")
+                if 'Plugin' in msg:
+                    found_plugin_log = True
+            
+            if not found_plugin_log:
+                print("⚠ 未发现插件相关的日志 (可能插件未加载或未执行)")
+            print("--------------------------------------\n")
     except Exception as e:
         log(f"⚠ 获取浏览器日志失败: {e}")
 
@@ -108,7 +159,6 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                 errors='ignore'
             )
             
-            output_lines = []
             start_time = time.time()
             captcha_ticket = None
             
@@ -123,11 +173,9 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                 try:
                     line = process.stdout.readline()
                     if line:
-                        output_lines.append(line)
                         if "SUCCESS: Obtained CaptchaTicket:" in line:
                             next_line = process.stdout.readline()
                             if next_line:
-                                output_lines.append(next_line)
                                 captcha_ticket = next_line.strip()
                                 log(f"✅ 成功获取 captchaTicket: {captcha_ticket[:20]}...")
                                 process.terminate()
@@ -349,12 +397,6 @@ def force_submit_exam(driver):
     """Python 主动执行交卷逻辑"""
     log("⚡ Python 介入，尝试主动提交试卷...")
     
-    # 截图以供调试
-    try:
-        driver.save_screenshot("before_submit.png")
-        log("📸 已保存提交前截图: before_submit.png")
-    except: pass
-    
     # 打印日志以供调试
     print_browser_logs(driver)
     
@@ -398,11 +440,11 @@ def wait_for_exam_completion(driver, timeout_seconds=180):
             
             if 'exam_start' in current_url:
                 if not exam_started:
-                    log("✅ 进入答题页面，给予插件 60秒 填写答案...") # 延长到60秒
+                    log("✅ 进入答题页面，给予插件 60秒 填写答案...") 
                     exam_started = True
                     exam_page_detected_time = time.time()
                 
-                # 延长到 60 秒后再提交
+                # 60秒后提交
                 if not python_submit_triggered and (time.time() - exam_page_detected_time > 60):
                     force_submit_exam(driver)
                     python_submit_triggered = True 
@@ -445,12 +487,15 @@ def process_single_account(username, password, account_index, total_accounts):
     """处理单个账号"""
     result = {'account_index': account_index, 'username': username, 'status': '未知', 'success': False, 'score': 0, 'highest_score': 0, 'failure_reason': None}
     
+    # 确保插件文件存在
+    ext_dir = setup_extension_files()
+
     for process_attempt in range(3):
         if process_attempt > 0: log(f"\n🔄 账号 {account_index} 全流程重试 ({process_attempt+1}/3)...")
         driver = None
         try:
             log("🌐 启动浏览器...")
-            driver = create_chrome_driver(with_extension=True)
+            driver = create_chrome_driver(ext_dir)
             driver.get("https://passport.jlc.com")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
