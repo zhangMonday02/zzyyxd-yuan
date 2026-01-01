@@ -69,6 +69,10 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
     """调用 AliV3min.py 获取 captchaTicket"""
     for attempt in range(max_retries):
         log(f"📞 正在调用 登录脚本 获取 captchaTicket (尝试 {attempt + 1}/{max_retries})...")
+        
+        process = None
+        output_lines = []  # 存储所有输出
+        
         try:
             if not os.path.exists('AliV3min.py'):
                 log("❌ 错误: 找不到登录依赖 AliV3min.py")
@@ -90,19 +94,36 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                 elapsed = time.time() - start_time
                 if elapsed > timeout_seconds:
                     log(f"⏰ 登录脚本超过 {timeout_seconds} 秒未完成，强制终止...")
-                    process.kill()
-                    process.wait()
+                    log("=" * 60)
+                    log("📋 AliV3min.py 完整日志输出:")
+                    log("=" * 60)
+                    for line in output_lines:
+                        print(line.rstrip())
+                    log("=" * 60)
+                    
+                    try:
+                        process.kill()
+                        process.wait(timeout=5)
+                    except:
+                        pass
                     break
                 
                 try:
                     line = process.stdout.readline()
                     if line:
+                        output_lines.append(line)  # 保存所有输出
+                        
                         if "SUCCESS: Obtained CaptchaTicket:" in line:
                             next_line = process.stdout.readline()
                             if next_line:
+                                output_lines.append(next_line)
                                 captcha_ticket = next_line.strip()
                                 log(f"✅ 成功获取 captchaTicket")
-                                process.terminate()
+                                try:
+                                    process.terminate()
+                                    process.wait(timeout=5)
+                                except:
+                                    pass
                                 return captcha_ticket
 
                         if "captchaTicket" in line:
@@ -111,24 +132,71 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=3):
                                 if match:
                                     captcha_ticket = match.group(1)
                                     log(f"✅ 成功获取 captchaTicket")
-                                    process.terminate()
+                                    try:
+                                        process.terminate()
+                                        process.wait(timeout=5)
+                                    except:
+                                        pass
                                     return captcha_ticket
                             except:
                                 pass
                     
                     if process.poll() is not None:
+                        # 进程已结束，读取剩余输出
+                        remaining = process.stdout.read()
+                        if remaining:
+                            output_lines.extend(remaining.splitlines(keepends=True))
                         break
-                except Exception:
+                        
+                except Exception as e:
+                    log(f"⚠ 读取输出时出错: {e}")
                     time.sleep(0.1)
             
-            if captcha_ticket:
-                return captcha_ticket
-            else:
+            # 如果没有获取到 captchaTicket，打印完整日志
+            if not captcha_ticket:
                 log(f"❌ 本次尝试未获取到 captchaTicket")
-                time.sleep(2)
+                log("=" * 60)
+                log("📋 AliV3min.py 完整日志输出:")
+                log("=" * 60)
+                for line in output_lines:
+                    print(line.rstrip())
+                log("=" * 60)
+                
+                # 确保进程已终止
+                if process and process.poll() is None:
+                    try:
+                        process.kill()
+                        process.wait(timeout=5)
+                    except:
+                        pass
+                
+                if attempt < max_retries - 1:
+                    log(f"⏳ 等待3秒后重试...")
+                    time.sleep(3)
+            else:
+                return captcha_ticket
+                
         except Exception as e:
             log(f"❌ 调用登录脚本异常: {e}")
-            time.sleep(2)
+            log("=" * 60)
+            log("📋 AliV3min.py 完整日志输出:")
+            log("=" * 60)
+            for line in output_lines:
+                print(line.rstrip())
+            log("=" * 60)
+            
+            # 确保进程已终止
+            if process and process.poll() is None:
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except:
+                    pass
+            
+            if attempt < max_retries - 1:
+                log(f"⏳ 等待3秒后重试...")
+                time.sleep(3)
+    
     return None
 
 
