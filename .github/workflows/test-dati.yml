@@ -38,7 +38,7 @@ jobs:
       - name: '进行自动答题流程(日志在这里看)'
         id: run_script
         run: |
-          python ./dati.py "18036815431" "134613461346zz" "true"
+          python ./dati.py "18036815431" "134613461346zzY" "true"
           
       - name: '上传调试截图'
         uses: actions/upload-artifact@v4
