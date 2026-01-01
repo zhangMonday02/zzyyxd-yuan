@@ -11,7 +11,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoAlertPresentException, UnexpectedAlertPresentException
+from selenium.common.exceptions import NoAlertPresentException, UnexpectedAlertPresentException, TimeoutException
 
 # 导入SM2加密方法
 try:
@@ -308,7 +308,7 @@ def switch_to_exam_iframe(driver):
     尝试切换到答题系统的iframe
     """
     try:
-        # 切回主文档，防止嵌套查找错误
+        # 切回主文档
         driver.switch_to.default_content()
         
         # 优先尝试 id="client_context_frame"
@@ -320,7 +320,6 @@ def switch_to_exam_iframe(driver):
     except:
         try:
             driver.switch_to.default_content()
-            # 备用尝试 name="context_iframe"
             iframe = driver.find_element(By.NAME, "context_iframe")
             driver.switch_to.frame(iframe)
             return True
@@ -335,11 +334,8 @@ def click_start_exam_button(driver):
     包含iframe切换逻辑
     """
     log(f"🔍 检查开始答题按钮...")
-    
-    # 尝试切入 iframe
     switch_to_exam_iframe(driver)
     
-    # 尝试多种定位方式
     xpaths = [
         '//*[@id="startExamBtn"]',
         '//button[contains(@class, "btn-primary")]//span[contains(text(), "开始答题")]',
@@ -364,6 +360,7 @@ def click_start_exam_button(driver):
             continue
     
     if not found:
+        driver.switch_to.default_content()
         log("❌ 未找到开始答题按钮")
         return False
         
@@ -373,64 +370,97 @@ def click_start_exam_button(driver):
 def handle_possible_alerts(driver):
     """处理可能出现的弹窗 (Alert/Confirm)"""
     try:
-        # 尝试切换到 Alert
         alert = driver.switch_to.alert
         log(f"⚠ 检测到弹窗: {alert.text}，正在接受...")
         alert.accept()
         return True
     except NoAlertPresentException:
         return False
+    except Exception:
+        return False
+
+
+def force_submit_exam(driver):
+    """
+    Python 主动执行交卷逻辑
+    代替插件不稳定的点击操作
+    """
+    log("⚡ Python 介入，尝试主动提交试卷...")
+    
+    try:
+        # 1. 点击“提交试卷”按钮
+        end_btn = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.ID, "endExamBtn"))
+        )
+        
+        # 检查按钮文本，如果还在倒计时，可能需要等一下，或者不管直接点
+        # 插件代码里是倒计时结束后去除 disabled 属性
+        if end_btn.get_attribute("disabled"):
+            log("⚠ 交卷按钮暂时不可用(倒计时中)，强制移除 disabled 属性...")
+            driver.execute_script("arguments[0].removeAttribute('disabled');", end_btn)
+            time.sleep(0.5)
+        
+        end_btn.click()
+        log("✅ 点击了[提交试卷]按钮")
+        
+        # 2. 等待并点击确认弹窗中的“确定”
+        # 插件里对应的是 #confirmEndExamBtn
+        time.sleep(1) # 等待模态框动画
+        
+        confirm_btn = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.ID, "confirmEndExamBtn"))
+        )
+        confirm_btn.click()
+        log("✅ 点击了[确认交卷]按钮")
+        
+        return True
     except Exception as e:
+        log(f"⚠ 主动交卷失败 (可能是已经交了或选择器不对): {e}")
         return False
 
 
 def wait_for_exam_completion(driver, timeout_seconds=180):
     """
     等待答题完成 (exam_start -> result)
-    增加对弹窗的处理和实时日志输出
+    逻辑：等待一段时间让插件填空 -> Python 主动点击交卷 -> 等待跳转
     """
     log(f"⏳ 等待答题流程 (最长 {timeout_seconds}s)...")
     start_time = time.time()
     last_log_time = start_time
     
-    exam_started = False
+    exam_page_detected_time = 0
+    python_submit_triggered = False
     
     while time.time() - start_time < timeout_seconds:
-        # 1. 优先处理弹窗 (这是最可能的卡死原因)
         handle_possible_alerts(driver)
         
         try:
-            # 2. 刷新 Iframe 上下文 (页面跳转后旧的 iframe 引用会失效)
             switch_to_exam_iframe(driver)
-            
-            # 3. 获取当前 Iframe 内部的 URL
             current_inner_url = driver.execute_script("return window.location.href;")
             
-            # 4. 定期输出状态 (每15秒)
+            # 定期日志
             if time.time() - last_log_time > 15:
-                log(f"ℹ 插件运行中... 当前页面: {current_inner_url.split('?')[0]}")
+                log(f"ℹ 页面状态: {current_inner_url.split('?')[0]}")
                 last_log_time = time.time()
             
-            # 5. 阶段判断 - 仅通过 URL 判断
-            if not exam_started:
-                # 检查是否进入答题页
-                if 'exam_start' in current_inner_url:
-                    log("✅ 进入答题页面，插件开始自动答题...")
-                    exam_started = True
-                elif '/result/' in current_inner_url:
-                    log(f"✅ 直接跳转到了结果页: {current_inner_url}")
-                    return True
-            else:
-                # 检查是否进入结果页 - 必须包含 /result/
-                if '/result/' in current_inner_url:
-                    log(f"✅ 答题结束，跳转至结果页: {current_inner_url}")
-                    return True
+            # 判断当前状态
+            if '/result/' in current_inner_url:
+                log(f"✅ 成功跳转至结果页: {current_inner_url}")
+                return True
+            
+            if 'exam_start' in current_inner_url:
+                if exam_page_detected_time == 0:
+                    log("✅ 进入答题页面，给予插件 25秒 填写答案...")
+                    exam_page_detected_time = time.time()
+                
+                # 如果已经在答题页面停留超过 25 秒，且还没提交，Python 主动介入
+                if not python_submit_triggered and (time.time() - exam_page_detected_time > 25):
+                    force_submit_exam(driver)
+                    python_submit_triggered = True # 标记已尝试提交，避免重复死循环点击
             
         except UnexpectedAlertPresentException:
-            # 捕捉在执行JS时突然出现的弹窗
             handle_possible_alerts(driver)
-        except Exception as e:
-            # 页面跳转期间可能会抛出异常，忽略并重试
+        except Exception:
             time.sleep(1)
             
         time.sleep(2)
@@ -442,15 +472,13 @@ def wait_for_exam_completion(driver, timeout_seconds=180):
 def get_exam_score(driver):
     """获取分数"""
     log("🔍 获取分数...")
-    
-    # 确保在 iframe 里
     switch_to_exam_iframe(driver)
     
     try:
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(2)
         
-        # 方式 1: 直接找 class="score" 元素
+        # 方式 1: 直接找 class="score"
         try:
             score_elem = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "score"))
@@ -462,13 +490,19 @@ def get_exam_score(driver):
         except:
             pass
         
-        # 方式 2: 页面源码正则提取
-        page_source = driver.page_source
-        match = re.search(r'class=["\']score["\'][^>]*>(\d+)', page_source)
-        if match:
-            score = int(match.group(1))
-            log(f"📊 提取到分数 (Regex): {score}")
-            return score
+        # 方式 2: 找“得分：xx”
+        try:
+            # 这种通用性更强，防止 class 变动
+            elements = driver.find_elements(By.XPATH, "//*[contains(text(), '分')]")
+            for el in elements:
+                txt = el.text
+                # 匹配纯数字或者"80分"这种格式
+                if re.match(r'^\d+$', txt) or re.match(r'^\d+\s*分$', txt):
+                     score = int(re.search(r'\d+', txt).group())
+                     log(f"📊 提取到分数 (Text Match): {score}")
+                     return score
+        except:
+            pass
             
     except Exception as e:
         log(f"❌ 获取分数失败: {e}")
@@ -487,7 +521,6 @@ def process_single_account(username, password, account_index, total_accounts):
         'failure_reason': None
     }
     
-    # 整个流程重试 (登录+答题)
     max_process_retries = 3
     
     for process_attempt in range(max_process_retries):
@@ -496,63 +529,50 @@ def process_single_account(username, password, account_index, total_accounts):
             
         driver = None
         try:
-            # 1. 启动浏览器 (带插件 + 防检测)
             log("🌐 启动浏览器...")
             driver = create_chrome_driver(with_extension=True)
             
-            # 2. 打开页面
             driver.get("https://passport.jlc.com")
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             
-            # 3. 初始化 Session (获取 lsId Cookie)
             if not perform_init_session(driver):
                 raise Exception("初始化 Session 失败")
             
-            # 4. 保持浏览器开启，调用外部脚本获取 Ticket
             captcha_ticket = call_aliv3min_with_timeout()
             if not captcha_ticket:
                 raise Exception("获取 CaptchaTicket 失败")
             
-            # 5. 登录 (使用 Browser Fetch)
             status, login_res = login_with_password(driver, username, password, captcha_ticket)
             
             if status == 'password_error':
                 result['status'] = '密码错误'
                 result['failure_reason'] = '账号或密码不正确'
-                return result # 密码错误不重试
+                return result
                 
             if status != 'success':
                 raise Exception(f"登录失败: {login_res}")
                 
-            # 6. 验证登录
             if not verify_login_on_member_page(driver):
                 raise Exception("登录验证失败 (未找到客编)")
                 
-            # 7. 答题流程 (内部循环重试)
             exam_url = "https://member.jlc.com/integrated/exam-center/intermediary?examinationRelationUrl=https%3A%2F%2Fexam.kaoshixing.com%2Fexam%2Fbefore_answer_notice%2F1647581&examinationRelationId=1647581"
             
             for exam_retry in range(3):
                 log(f"📝 开始答题 ({exam_retry+1}/3)...")
                 
-                # 打开链接
                 driver.get(exam_url)
-                
-                # 硬性等待 20 秒，等待 iframe 加载
                 log("⏳ 打开答题链接，等待 20 秒...")
                 time.sleep(20)
                 
-                # 检查并点击开始按钮 (会自动切入 iframe)
                 if not click_start_exam_button(driver):
                     log("❌ 找不到开始按钮，跳过本次尝试")
                     continue
                     
-                # 等待完成 (exam_start -> result)
                 if not wait_for_exam_completion(driver):
                     log("❌ 答题超时或未完成")
                     result['failure_reason'] = '脚本超过3分钟未执行成功'
                     continue
                     
-                # 获取分数
                 score = get_exam_score(driver)
                 if score is not None:
                     result['score'] = score
@@ -570,7 +590,6 @@ def process_single_account(username, password, account_index, total_accounts):
                 else:
                     log("⚠ 未能获取到分数")
                 
-            # 答题循环结束仍未成功
             raise Exception("答题多次未通过或超时")
 
         except Exception as e:
