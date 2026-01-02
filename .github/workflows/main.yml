@@ -136,4 +136,4 @@ jobs:
             password-changed.txt
             logs/*.log
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 3
