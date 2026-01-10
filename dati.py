@@ -545,6 +545,15 @@ def perform_exam_process(driver, max_retries=3):
             # 步骤 5: 获取分数
             score = get_exam_score(driver)
             if score is not None:
+                # 如果得分不是0分且小于60分，则该账号答题流程重试
+                if 0 < score < 60:
+                    if exam_attempt < max_retries - 1:
+                        log(f"⚠ 分数 {score} 不及格 (0 < score < 60)，正在同一个浏览器实例中重试 (剩余机会: {max_retries - 1 - exam_attempt})...")
+                        time.sleep(3)
+                        continue
+                    else:
+                        log(f"❌ 不及格重试已达最大次数，最终分数: {score}")
+
                 return True, score
             else:
                 raise Exception("未能获取到分数")
@@ -694,7 +703,8 @@ def process_single_account(username, password, account_index, total_accounts):
                 
                 # --- 阶段 2: 答题流程 ---
                 # 登录成功，开始答题
-                exam_success, score = perform_exam_process(driver, max_retries=3)
+                # UPDATE: 传入 max_retries=4，确保有1次初始尝试 + 3次重试机会
+                exam_success, score = perform_exam_process(driver, max_retries=4)
                 
                 if exam_success and score is not None:
                     result['score'] = score
