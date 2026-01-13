@@ -697,7 +697,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'retry_count': retry_count,
         'password_error': False,  #标记密码错误
         'actual_password': None,  # 实际使用的密码
-        'backup_index': -1  # 使用的备用密码索引，-1表示原密码
+        'backup_index': -1,  # 使用的备用密码索引，-1表示原密码
+        'critical_error': False   #标记严重错误（如多次调用依赖失败），需跳过重试
     }
 
     backup_passwords = [
@@ -730,60 +731,83 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
 
         # 尝试密码（原密码 + 备用密码）
         while True:
-            # 调用get_ali_auth_code，支持超时
-            auth_result = get_ali_auth_code(username, current_password, account_index)
+            # 在这里加入 5 次重试循环，以处理网络不稳定导致的 authCode 获取失败
+            # 如果是 10208 密码错误，会立即中断重试并切换密码
+            is_pwd_error = False
+            max_auth_retries = 5
             
-            # get_ali_auth_code 返回 None 表示超时
-            if auth_result is None:
-                result['oshwhub_status'] = '登录超时'
-                return result
+            for auth_attempt in range(max_auth_retries):
+                # 调用get_ali_auth_code，支持超时
+                auth_result = get_ali_auth_code(username, current_password, account_index)
                 
-            if isinstance(auth_result, str) and len(auth_result) > 100:
-                # 说明返回的是日志内容，未提取到 authCode
-                ali_output = auth_result
-                
-                # 检查是否包含错误码 10208（账密错误）
-                is_pwd_error = False
-                for line in ali_output.split('\n'):
-                    line = line.strip()
-                    # 尝试提取 JSON 部分，应对带前缀的情况
-                    if not line.startswith('{') and '{' in line:
-                        line = line[line.find('{'):]
-                    try:
-                        data = json.loads(line)
-                        if isinstance(data, dict) and data.get('code') == 10208:
-                            is_pwd_error = True
-                            break
-                    except:
-                        continue
-                
-                if is_pwd_error:
-                    log(f"账号 {account_index} - ❌ 密码错误 ({'原密码' if current_backup_index == -1 else f'备用密码{current_backup_index + 1}'})")
+                # get_ali_auth_code 返回 None 表示超时
+                if auth_result is None:
+                    pass # 超时，继续重试
+                elif isinstance(auth_result, str) and len(auth_result) > 100:
+                    # 说明返回的是日志内容，未提取到 authCode
+                    ali_output = auth_result
                     
-                    # 尝试下一个备用密码
-                    if current_backup_index == -1:
-                        current_backup_index = 0
-                    else:
-                        current_backup_index += 1
-                        
-                    if current_backup_index >= len(backup_passwords):
-                        # 所有密码都尝试完毕
-                        log(f"账号 {account_index} - ❌ 所有备用密码尝试失败，跳过此账号")
-                        result['password_error'] = True
-                        result['oshwhub_status'] = '所有密码错误'
-                        return result
+                    # 检查是否包含错误码 10208（账密错误）
+                    for line in ali_output.split('\n'):
+                        line = line.strip()
+                        if not line.startswith('{') and '{' in line:
+                            line = line[line.find('{'):]
+                        try:
+                            data = json.loads(line)
+                            if isinstance(data, dict) and data.get('code') == 10208:
+                                is_pwd_error = True
+                                break
+                        except:
+                            continue
                     
-                    current_password = backup_passwords[current_backup_index]
-                    log(f"账号 {account_index} - 🔄 尝试备用密码: {desensitize_password(current_password)}")
-                    continue # 继续循环尝试新密码
+                    if is_pwd_error:
+                        # 密码错误不需要重试调用，直接跳出内层循环进行密码切换
+                        break
                 else:
-                    log("❌ 登录脚本未返回 AuthCode，输出如下：")
-                    log(ali_output)
-                    result['oshwhub_status'] = '登录失败'
+                    # 成功获取 authCode
+                    auth_code = auth_result
+                    break
+                
+                # 仅在非密码错误且未达到最大尝试次数时等待重试
+                if auth_attempt < max_auth_retries - 1 and not is_pwd_error:
+                    log(f"账号 {account_index} - ⚠ 未获取到AuthCode，等待1秒后第 {auth_attempt + 2} 次重试...")
+                    time.sleep(1)
+
+            # 处理重试循环后的结果
+            
+            if is_pwd_error:
+                log(f"账号 {account_index} - ❌ 密码错误 ({'原密码' if current_backup_index == -1 else f'备用密码{current_backup_index + 1}'})")
+                
+                # 尝试下一个备用密码
+                if current_backup_index == -1:
+                    current_backup_index = 0
+                else:
+                    current_backup_index += 1
+                    
+                if current_backup_index >= len(backup_passwords):
+                    # 所有密码都尝试完毕
+                    log(f"账号 {account_index} - ❌ 所有备用密码尝试失败，跳过此账号")
+                    result['password_error'] = True
+                    result['oshwhub_status'] = '所有密码错误'
                     return result
+                
+                current_password = backup_passwords[current_backup_index]
+                log(f"账号 {account_index} - 🔄 尝试备用密码: {desensitize_password(current_password)}")
+                continue # 继续循环尝试新密码
+            
+            if not auth_code:
+                if auth_result is None:
+                     result['oshwhub_status'] = '登录超时'
+                     return result
+                else:
+                     log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次调用登录依赖失败，未返回有效AuthCode")
+                     log("❌ 登录脚本输出如下：")
+                     log(auth_result)
+                     result['oshwhub_status'] = 'authCode获取异常'
+                     result['critical_error'] = True  # 标记为严重错误
+                     return result
             else:
                 # 成功获取 authCode
-                auth_code = auth_result
                 result['actual_password'] = current_password
                 result['backup_index'] = current_backup_index
                 log(f"账号 {account_index} - ✅ 成功获取 authCode")
@@ -909,15 +933,35 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         
         # 重新获取 AuthCode，使用之前验证成功的密码
-        log(f"账号 {account_index} - 正在重新调用 AliV3 获取 m.jlc.com 登录凭证...")
-        auth_result_jlc = get_ali_auth_code(username, result['actual_password'], account_index)
+        log(f"账号 {account_index} - 正在重新调用 登录依赖 获取 m.jlc.com 登录凭证...")
         
-        if auth_result_jlc is None:
-             log(f"账号 {account_index} - ❌ m.jlc.com 登录超时")
-             result['jindou_status'] = '登录超时'
-        elif isinstance(auth_result_jlc, str) and len(auth_result_jlc) > 100:
-             log(f"账号 {account_index} - ❌ m.jlc.com 登录失败，无法获取 AuthCode")
-             result['jindou_status'] = 'AuthCode获取失败'
+        auth_result_jlc = None
+        auth_code_jlc = None
+        max_auth_retries = 5
+        
+        for auth_attempt in range(max_auth_retries):
+            # 这里已经通过了密码验证，所以只重试网络/API错误
+            auth_result_jlc = get_ali_auth_code(username, result['actual_password'], account_index)
+            
+            if auth_result_jlc is None:
+                pass 
+            elif isinstance(auth_result_jlc, str) and len(auth_result_jlc) > 100:
+                pass # 未获取到有效code
+            else:
+                auth_code_jlc = auth_result_jlc
+                break
+            
+            if auth_attempt < max_auth_retries - 1:
+                log(f"账号 {account_index} - ⚠ JLC登录凭证获取失败，等待1秒后第 {auth_attempt + 2} 次重试...")
+                time.sleep(1)
+        
+        if auth_code_jlc is None:
+             log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次无法获取 m.jlc.com 登录凭证")
+             if isinstance(auth_result_jlc, str):
+                 log("❌ 登录脚本输出如下：")
+                 log(auth_result_jlc)
+             result['jindou_status'] = 'authCode获取异常'
+             result['critical_error'] = True # 标记严重错误
         else:
             auth_code_jlc = auth_result_jlc
             log(f"账号 {account_index} - ✅ 成功获取 m.jlc.com 登录 authCode")
@@ -1031,7 +1075,8 @@ def process_single_account(username, password, account_index, total_accounts):
         'retry_count': 0,  # 记录最后使用的retry_count
         'password_error': False,  # 标记密码错误
         'actual_password': None,  # 实际使用的密码
-        'backup_index': -1  # 使用的备用密码索引，-1表示原密码
+        'backup_index': -1,  # 使用的备用密码索引，-1表示原密码
+        'critical_error': False   # 标记严重错误
     }
     
     merged_success = {'oshwhub': False, 'jindou': False}
@@ -1045,6 +1090,14 @@ def process_single_account(username, password, account_index, total_accounts):
             merged_result['oshwhub_status'] = '密码错误'
             merged_result['nickname'] = '未知'
             # 停止后续尝试
+            break
+        
+        # 如果检测到严重错误（如多次调用登录依赖失败），立即停止重试，处理下一个账号
+        if result.get('critical_error'):
+            merged_result['critical_error'] = True
+            merged_result['oshwhub_status'] = result.get('oshwhub_status', '严重错误')
+            if result.get('jindou_status') != '未知':
+                 merged_result['jindou_status'] = result.get('jindou_status')
             break
         
         # 合并开源平台结果：如果本次成功且之前未成功，则更新
