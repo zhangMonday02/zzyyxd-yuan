@@ -770,8 +770,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 
                 # 仅在非密码错误且未达到最大尝试次数时等待重试
                 if auth_attempt < max_auth_retries - 1 and not is_pwd_error:
-                    log(f"账号 {account_index} - ⚠ 未获取到AuthCode，等待1秒后第 {auth_attempt + 2} 次重试...")
-                    time.sleep(1)
+                    log(f"账号 {account_index} - ⚠ 未获取到AuthCode，等待10秒后第 {auth_attempt + 2} 次重试...")
+                    time.sleep(10)
 
             # 处理重试循环后的结果
             
