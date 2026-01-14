@@ -418,7 +418,7 @@ class JLCClient:
         return True
 
 def navigate_and_interact_m_jlc(driver, account_index):
-    """在 m.jlc.com 刷新以触发网络请求 (不再交互)"""
+    """在 m.jlc.com 刷新以触发网络请求"""
     log(f"账号 {account_index} - 刷新页面以获取 Token 和 SecretKey...")
     
     try:
@@ -731,10 +731,10 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
 
         # 尝试密码（原密码 + 备用密码）
         while True:
-            # 在这里加入 5 次重试循环，以处理网络不稳定导致的 authCode 获取失败
+            # 在这里加入 18 次重试循环，以处理网络不稳定导致的 authCode 获取失败
             # 如果是 10208 密码错误，会立即中断重试并切换密码
             is_pwd_error = False
-            max_auth_retries = 10
+            max_auth_retries = 18
             
             for auth_attempt in range(max_auth_retries):
                 # 调用get_ali_auth_code，支持超时
@@ -937,7 +937,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         
         auth_result_jlc = None
         auth_code_jlc = None
-        max_auth_retries = 10
+        max_auth_retries = 18
         
         for auth_attempt in range(max_auth_retries):
             # 这里已经通过了密码验证，所以只重试网络/API错误
