@@ -734,7 +734,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             # 在这里加入 5 次重试循环，以处理网络不稳定导致的 authCode 获取失败
             # 如果是 10208 密码错误，会立即中断重试并切换密码
             is_pwd_error = False
-            max_auth_retries = 5
+            max_auth_retries = 10
             
             for auth_attempt in range(max_auth_retries):
                 # 调用get_ali_auth_code，支持超时
@@ -770,8 +770,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 
                 # 仅在非密码错误且未达到最大尝试次数时等待重试
                 if auth_attempt < max_auth_retries - 1 and not is_pwd_error:
-                    log(f"账号 {account_index} - ⚠ 未获取到AuthCode，等待10秒后第 {auth_attempt + 2} 次重试...")
-                    time.sleep(10)
+                    log(f"账号 {account_index} - ⚠ 未获取到AuthCode，等待5秒后第 {auth_attempt + 2} 次重试...")
+                    time.sleep(5)
 
             # 处理重试循环后的结果
             
@@ -937,7 +937,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         
         auth_result_jlc = None
         auth_code_jlc = None
-        max_auth_retries = 5
+        max_auth_retries = 10
         
         for auth_attempt in range(max_auth_retries):
             # 这里已经通过了密码验证，所以只重试网络/API错误
@@ -952,8 +952,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 break
             
             if auth_attempt < max_auth_retries - 1:
-                log(f"账号 {account_index} - ⚠ JLC登录凭证获取失败，等待10秒后第 {auth_attempt + 2} 次重试...")
-                time.sleep(10)
+                log(f"账号 {account_index} - ⚠ JLC登录凭证获取失败，等待5秒后第 {auth_attempt + 2} 次重试...")
+                time.sleep(5)
         
         if auth_code_jlc is None:
              log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次无法获取 m.jlc.com 登录凭证")
