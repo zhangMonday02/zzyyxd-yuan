@@ -65,8 +65,8 @@ def create_chrome_driver():
     return driver
 
 
-def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=5):
-    """调用 AliV3min.py 获取 captchaTicket - 最多重试5次"""
+def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=18):
+    """调用 AliV3min.py 获取 captchaTicket - 最多重试18次"""
     for attempt in range(max_retries):
         log(f"📞 正在调用 登录脚本 获取 captchaTicket (尝试 {attempt + 1}/{max_retries})...")
         
@@ -94,6 +94,7 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=5):
             while True:
                 elapsed = time.time() - start_time
                 if elapsed > timeout_seconds:
+                    # 情况1：超时强制停止，需要打印日志
                     log(f"⏰ 登录脚本超过 {timeout_seconds} 秒未完成，强制终止...")
                     log("=" * 60)
                     log("📋 AliV3min.py 完整日志输出:")
@@ -153,15 +154,17 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=5):
                     log(f"⚠ 读取输出时出错: {e}")
                     time.sleep(0.1)
             
-            # 如果没有获取到 captchaTicket，打印完整日志
+            # 如果没有获取到 captchaTicket
             if not captcha_ticket:
-                log(f"❌ 本次尝试未获取到 captchaTicket")
-                log("=" * 60)
-                log("📋 AliV3min.py 完整日志输出:")
-                log("=" * 60)
-                for line in output_lines:
-                    print(line.rstrip())
-                log("=" * 60)
+                # 情况2：如果是最后一次重试失败，打印日志
+                if attempt == max_retries - 1:
+                    log(f"❌ 最终尝试未获取到 captchaTicket")
+                    log("=" * 60)
+                    log("📋 AliV3min.py 最后一次尝试的完整日志输出:")
+                    log("=" * 60)
+                    for line in output_lines:
+                        print(line.rstrip())
+                    log("=" * 60)
                 
                 # 确保进程已终止
                 if process and process.poll() is None:
@@ -172,19 +175,22 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=5):
                         pass
                 
                 if attempt < max_retries - 1:
-                    log(f"⏳ 等待3秒后重试...")
-                    time.sleep(3)
+                    log(f"⚠ 未获取到CaptchaTicket，等待5秒后第 {attempt + 2} 次重试...")
+                    time.sleep(5)
             else:
                 return captcha_ticket
                 
         except Exception as e:
             log(f"❌ 调用登录脚本异常: {e}")
-            log("=" * 60)
-            log("📋 AliV3min.py 完整日志输出:")
-            log("=" * 60)
-            for line in output_lines:
-                print(line.rstrip())
-            log("=" * 60)
+            
+            # 情况2：如果是最后一次重试且发生异常，打印日志
+            if attempt == max_retries - 1:
+                log("=" * 60)
+                log("📋 AliV3min.py 最后一次尝试的完整日志输出:")
+                log("=" * 60)
+                for line in output_lines:
+                    print(line.rstrip())
+                log("=" * 60)
             
             # 确保进程已终止
             if process and process.poll() is None:
@@ -195,10 +201,10 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=5):
                     pass
             
             if attempt < max_retries - 1:
-                log(f"⏳ 等待3秒后重试...")
-                time.sleep(3)
+                log(f"⚠ 未获取到CaptchaTicket，等待5秒后第 {attempt + 2} 次重试...")
+                time.sleep(5)
     
-    # 5次都失败，程序退出
+    # 18次都失败，程序退出
     log("❌ 登录脚本存在异常")
     sys.exit(1)
 
