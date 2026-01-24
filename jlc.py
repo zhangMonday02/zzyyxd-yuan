@@ -76,6 +76,30 @@ def desensitize_password(pwd):
         return pwd
     return pwd[:3] + '*****'
 
+def check_health_status():
+    """检查验证码API健康状态"""
+    url = "http://222.186.168.34:8000/api/health"
+    log("⏳ 正在检查验证码API健康状态...")
+    for attempt in range(3):
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get("status")
+                log(f"🔍 验证码API响应: {status}")
+                if status == "healthy":
+                    return True
+                else:
+                    return False
+            else:
+                log(f"⚠ 验证码API请求返回状态码: {response.status_code} (尝试 {attempt + 1}/3)")
+        except Exception as e:
+            log(f"⚠ 检查验证码API超时或异常 (尝试 {attempt + 1}/3): {e}")
+            time.sleep(1)
+    
+    log("❌ 验证码API请求多次失败")
+    return False
+
 def with_retry(func, max_retries=5, delay=1):
     """如果函数返回None或抛出异常，静默重试"""
     def wrapper(*args, **kwargs):
@@ -698,7 +722,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'password_error': False,  #标记密码错误
         'actual_password': None,  # 实际使用的密码
         'backup_index': -1,  # 使用的备用密码索引，-1表示原密码
-        'critical_error': False   #标记严重错误（如多次调用依赖失败），需跳过重试
+        'critical_error': False,   #标记严重错误（如多次调用依赖失败），需跳过重试
+        'stop_all': False # 标记是否停止所有账号
     }
 
     backup_passwords = [
@@ -796,15 +821,24 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 continue # 继续循环尝试新密码
             
             if not auth_code:
-                if auth_result is None:
-                     result['oshwhub_status'] = '登录超时'
-                     return result
-                else:
-                     log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次调用登录依赖失败，未返回有效AuthCode")
+                 log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次调用登录依赖失败，未返回有效AuthCode")
+                 
+                 if isinstance(auth_result, str):
                      log("❌ 登录脚本输出如下：")
                      log(auth_result)
-                     result['oshwhub_status'] = 'authCode获取异常'
-                     result['critical_error'] = True  # 标记为严重错误
+                 elif auth_result is None:
+                     log(f"账号 {account_index} - ❌ 登录调用超时")
+                 
+                 # 调用API健康检查
+                 if check_health_status():
+                     log(f"账号 {account_index} - ⚠ 验证码API正常，但本账号获取AuthCode失败，跳过该账号")
+                     result['oshwhub_status'] = '获取AuthCode失败'
+                     result['critical_error'] = True
+                     return result
+                 else:
+                     log(f"账号 {account_index} - ❌ 验证码API异常，停止所有账号任务。")
+                     result['oshwhub_status'] = '验证码api异常'
+                     result['stop_all'] = True
                      return result
             else:
                 # 成功获取 authCode
@@ -960,7 +994,16 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
              if isinstance(auth_result_jlc, str):
                  log("❌ 登录脚本输出如下：")
                  log(auth_result_jlc)
-             result['jindou_status'] = 'authCode获取异常'
+                 
+             if check_health_status():
+                 result['jindou_status'] = '获取AuthCode失败'
+                 result['critical_error'] = True
+             else:
+                 log(f"账号 {account_index} - ❌ 验证码API异常，停止所有账号任务。")
+                 result['jindou_status'] = '验证码api异常'
+                 result['stop_all'] = True
+                 return result
+                 
              result['critical_error'] = True # 标记严重错误
         else:
             auth_code_jlc = auth_result_jlc
@@ -1076,7 +1119,8 @@ def process_single_account(username, password, account_index, total_accounts):
         'password_error': False,  # 标记密码错误
         'actual_password': None,  # 实际使用的密码
         'backup_index': -1,  # 使用的备用密码索引，-1表示原密码
-        'critical_error': False   # 标记严重错误
+        'critical_error': False,   # 标记严重错误
+        'stop_all': False # 标记是否停止所有账号
     }
     
     merged_success = {'oshwhub': False, 'jindou': False}
@@ -1084,6 +1128,16 @@ def process_single_account(username, password, account_index, total_accounts):
     for attempt in range(max_retries + 1):  # 第一次执行 + 重试次数
         result = sign_in_account(username, password, account_index, total_accounts, retry_count=attempt)
         
+        # 检查是否需要停止所有账号
+        if result.get('stop_all'):
+            merged_result['stop_all'] = True
+            if result['oshwhub_status'] == '验证码api异常':
+                merged_result['oshwhub_status'] = '验证码api异常'
+            if result['jindou_status'] == '验证码api异常':
+                merged_result['jindou_status'] = '验证码api异常'
+            # 即使停止，也要保存当前已有的信息（如果有）
+            break
+
         # 如果检测到密码错误，立即停止重试
         if result.get('password_error'):
             merged_result['password_error'] = True
@@ -1312,6 +1366,27 @@ def main():
         log(f"开始处理第 {i} 个账号")
         result = process_single_account(username, password, i, total_accounts)
         all_results.append(result)
+        
+        if result.get('stop_all'):
+            log("🛑 检测到验证码API异常信号，终止后续账号处理，直接输出总结")
+            # 填充剩余账号为异常状态
+            for j in range(i + 1, total_accounts + 1):
+                dummy_result = {
+                    'account_index': j,
+                    'nickname': '未知',
+                    'oshwhub_status': '验证码api异常',
+                    'jindou_status': '验证码api异常',
+                    'oshwhub_success': False,
+                    'jindou_success': False,
+                    'initial_points': 0, 'final_points': 0, 'points_reward': 0, 'reward_results': [],
+                    'initial_jindou': 0, 'final_jindou': 0, 'jindou_reward': 0, 'has_jindou_reward': False,
+                    'retry_count': 0,
+                    'password_error': False,
+                    'actual_password': None,
+                    'backup_index': -1
+                }
+                all_results.append(dummy_result)
+            break
         
         if i < total_accounts:
             wait_time = random.randint(3, 5)
