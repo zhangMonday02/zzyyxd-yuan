@@ -58,7 +58,7 @@ class AliV3:
                 headers['X-API-Key'] = API_KEY
             return headers
 
-        url = 'http://222.186.168.34:8000/api/captcha/solve'
+        url = 'http://144.66.33.227:8000/api/captcha/solve'
 
         request_data = {
             'type': 'slide',
@@ -311,3 +311,4 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
+
