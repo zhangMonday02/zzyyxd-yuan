@@ -49,7 +49,7 @@ def check_health_status():
     如果返回 healthy 则返回 True
     如果超时(重试3次)或非 healthy 则返回 False
     """
-    url = "http://144.66.33.227:8000/api/health"
+    url = "http://114.66.33.227:8000/api/health"
     log(f"正在检查API健康状态: {url}")
     
     for attempt in range(3):
