@@ -41,7 +41,7 @@ class AliV3:
                 headers['X-API-Key'] = API_KEY
             return headers
 
-        url = 'http://144.66.33.227:8000/api/captcha/solve'
+        url = 'http://114.66.33.227:8000/api/captcha/solve'
 
         request_data = {
             'type': 'slide',
