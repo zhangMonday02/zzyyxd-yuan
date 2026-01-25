@@ -78,7 +78,7 @@ def desensitize_password(pwd):
 
 def check_health_status():
     """检查验证码API健康状态"""
-    url = "http://222.186.168.34:8000/api/health"
+    url = "http://144.66.33.227:8000/api/health"
     log("⏳ 正在检查验证码API健康状态...")
     for attempt in range(3):
         try:
