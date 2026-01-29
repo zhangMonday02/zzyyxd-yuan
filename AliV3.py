@@ -50,7 +50,7 @@ class AliV3:
         }
 
     def getCap(self):
-        API_KEY = 'ak_I9yMvTeRELuUUjiJLyoW9QsXCUzANy7q-h-q91bPWSo'  # jlc 31天
+        API_KEY = 'ak_qr9qPLAmVnwkv0Pm8O7HXsSu43Udnq6dhQJnAvYNtO0'  # jlc 31天
 
         def get_headers():
             headers = {'Content-Type': 'application/json'}
@@ -311,5 +311,6 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
+
 
 
