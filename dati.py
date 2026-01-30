@@ -5,8 +5,6 @@ import json
 import tempfile
 import subprocess
 import re
-import urllib.request
-import urllib.error
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -24,16 +22,6 @@ except ImportError:
     sys.exit(1)
 
 
-# --- 自定义异常用于控制流程 ---
-class SkipAccountException(Exception):
-    """跳过当前账号"""
-    pass
-
-class StopAllException(Exception):
-    """停止所有任务"""
-    pass
-
-
 def log(msg, show_time=True):
     """带时间戳的日志输出"""
     if show_time:
@@ -41,41 +29,6 @@ def log(msg, show_time=True):
     else:
         full_msg = msg
     print(full_msg, flush=True)
-
-
-def check_health_status():
-    """
-    检查 API 健康状态
-    如果返回 healthy 则返回 True
-    如果超时(重试3次)或非 healthy 则返回 False
-    """
-    url = "http://114.66.33.227:8000/api/health"
-    log(f"正在检查API健康状态: {url}")
-    
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                if response.status == 200:
-                    try:
-                        content = response.read().decode('utf-8')
-                        data = json.loads(content)
-                        if data.get("status") == "healthy":
-                            return True
-                        else:
-                            # 如果响应了但不是healthy，视为不健康
-                            return False
-                    except json.JSONDecodeError:
-                        return False
-                else:
-                    # 非200状态码
-                    return False
-        except (urllib.error.URLError, TimeoutError) as e:
-            log(f"⚠ 健康检查请求超时/失败 ({attempt + 1}/3): {e}")
-            time.sleep(1)
-            
-    log("❌ 健康检查多次超时，视为不正常")
-    return False
 
 
 def create_chrome_driver():
@@ -251,17 +204,9 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=18):
                 log(f"⚠ 未获取到CaptchaTicket，等待5秒后第 {attempt + 2} 次重试...")
                 time.sleep(5)
     
-    # 18次都失败，检查健康状态
-    log("❌ 登录脚本重试次数耗尽，正在检查API健康状态...")
-    
-    is_healthy = check_health_status()
-    
-    if is_healthy:
-        log("✅ API状态正常，跳过当前账号，准备运行下一个...")
-        raise SkipAccountException()
-    else:
-        log("❌ API状态异常，停止所有账号进程...")
-        raise StopAllException()
+    # 18次都失败，程序退出
+    log("❌ 登录脚本存在异常")
+    sys.exit(1)
 
 
 def send_request_via_browser(driver, url, method='POST', body=None):
@@ -677,9 +622,6 @@ def perform_login_flow(driver, username, password, max_retries=3):
             log("✅ 登录流程完成")
             return 'success', driver
             
-        except (SkipAccountException, StopAllException):
-            # 直接抛出这些特定的控制流异常，不进行浏览器重启重试
-            raise
         except Exception as e:
             log(f"❌ 登录流程异常: {e}")
             if login_attempt < max_retries - 1:
@@ -725,8 +667,7 @@ def process_single_account(username, password, account_index, total_accounts):
         'success': False, 
         'score': 0, 
         'highest_score': 0, 
-        'failure_reason': None,
-        'trigger_stop': False
+        'failure_reason': None
     }
     
     current_pwd_idx = 0
@@ -789,23 +730,6 @@ def process_single_account(username, password, account_index, total_accounts):
                 if driver: driver.quit()
                 return result
 
-            except SkipAccountException:
-                # API健康但重试次数过多，跳过当前
-                result['status'] = '验证码获取失败'
-                result['failure_reason'] = '验证码重试次数耗尽(API正常)'
-                log(f"⚠ 账号 {account_index} 因验证码重试耗尽(但API正常)被跳过")
-                if driver: driver.quit()
-                return result
-            
-            except StopAllException:
-                # API不健康，停止所有
-                result['status'] = '验证码api异常'
-                result['failure_reason'] = '验证码API异常(停止所有任务)'
-                result['trigger_stop'] = True
-                log(f"❌ 账号 {account_index} 触发API异常停止机制")
-                if driver: driver.quit()
-                return result
-
             except Exception as e:
                 log(f"❌ 账号处理异常: {e}")
                 if driver: 
@@ -852,25 +776,6 @@ def main():
         log(f"\n{'='*40}\n正在处理账号 {i}\n{'='*40}", show_time=False)
         res = process_single_account(u, p, i, len(usernames))
         all_results.append(res)
-        
-        # 检查是否触发了停止所有任务的信号
-        if res.get('trigger_stop'):
-            # 将剩余没跑的账号也记录为 验证码api异常
-            remaining_count = len(usernames) - i
-            if remaining_count > 0:
-                log(f"⚠ 因API异常，剩余 {remaining_count} 个账号将不执行，状态标记为: 验证码api异常")
-                for j in range(remaining_count):
-                    idx = i + 1 + j
-                    all_results.append({
-                        'account_index': idx, 
-                        'status': '验证码api异常', 
-                        'success': False, 
-                        'score': 0, 
-                        'highest_score': 0, 
-                        'failure_reason': '验证码API异常'
-                    })
-            break
-        
         if i < len(usernames): 
             time.sleep(5)
         
@@ -883,11 +788,7 @@ def main():
             log(f"账号{res['account_index']}: 立创题库答题成功✅ 分数:{res['score']}", show_time=False)
         else: 
             has_failure = True
-            # 如果是验证码api异常，特别显示
-            if res['status'] == '验证码api异常':
-                log(f"账号{res['account_index']}: 验证码api异常", show_time=False)
-            else:
-                log(f"账号{res['account_index']}: 立创题库答题失败❌ 原因:{res['failure_reason']}", show_time=False)
+            log(f"账号{res['account_index']}: 立创题库答题失败❌ 原因:{res['failure_reason']}", show_time=False)
     
     if fail_exit and has_failure: 
         sys.exit(1)
