@@ -8,6 +8,7 @@ import requests
 import io
 import platform
 import multiprocessing
+import shutil
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -75,30 +76,6 @@ def desensitize_password(pwd):
     if len(pwd) <= 3:
         return pwd
     return pwd[:3] + '*****'
-
-def check_health_status():
-    """检查验证码API健康状态"""
-    url = "http://114.66.33.227:8000/api/health"
-    log("⏳ 正在检查验证码API健康状态...")
-    for attempt in range(3):
-        try:
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get("status")
-                log(f"🔍 验证码API响应: {status}")
-                if status == "healthy":
-                    return True
-                else:
-                    return False
-            else:
-                log(f"⚠ 验证码API请求返回状态码: {response.status_code} (尝试 {attempt + 1}/3)")
-        except Exception as e:
-            log(f"⚠ 检查验证码API超时或异常 (尝试 {attempt + 1}/3): {e}")
-            time.sleep(1)
-    
-    log("❌ 验证码API请求多次失败")
-    return False
 
 def with_retry(func, max_retries=5, delay=1):
     """如果函数返回None或抛出异常，静默重试"""
@@ -680,27 +657,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     
     log(f"开始处理账号 {account_index}/{total_accounts}{retry_label}")
     
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument(f"--user-data-dir={tempfile.mkdtemp()}")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # 禁用图像加载
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-
-    caps = DesiredCapabilities.CHROME
-    caps['goog:loggingPrefs'] = {'performance': 'ALL'}
-    
-    driver = webdriver.Chrome(options=chrome_options, desired_capabilities=caps)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    
-    wait = WebDriverWait(driver, 25)
-    
-    # 记录详细结果
+    # 初始化结果字典
     result = {
         'account_index': account_index,
         'nickname': '未知',
@@ -722,10 +679,30 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'password_error': False,  #标记密码错误
         'actual_password': None,  # 实际使用的密码
         'backup_index': -1,  # 使用的备用密码索引，-1表示原密码
-        'critical_error': False,   #标记严重错误（如多次调用依赖失败），需跳过重试
-        'stop_all': False # 标记是否停止所有账号
+        'critical_error': False   #标记严重错误（如多次调用依赖失败），需跳过重试
     }
+    
+    # 显式创建临时目录用于 user-data-dir，以便后续清理
+    user_data_dir = tempfile.mkdtemp()
 
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-software-rasterizer") # 禁用软件光栅化
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # 禁用图像加载
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+
+    # 替换 DesiredCapabilities 提高兼容性
+    chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+    
+    driver = None
+    
     backup_passwords = [
         "Aa123123",
         "Zz123123",
@@ -740,6 +717,17 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     ]
 
     try:
+        # 尝试初始化 Driver
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            wait = WebDriverWait(driver, 25)
+        except Exception as e:
+            log(f"账号 {account_index} - ❌ 浏览器初始化失败: {e}")
+            result['oshwhub_status'] = '浏览器启动失败'
+            # 返回当前结果，外层逻辑会根据重试机制处理
+            return result
+
         # 1. 登录流程
         log(f"账号 {account_index} - 正在调用 登录(AliV3) 依赖进行登录...")
         
@@ -821,24 +809,15 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 continue # 继续循环尝试新密码
             
             if not auth_code:
-                 log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次调用登录依赖失败，未返回有效AuthCode")
-                 
-                 if isinstance(auth_result, str):
+                if auth_result is None:
+                     result['oshwhub_status'] = '登录超时'
+                     return result
+                else:
+                     log(f"账号 {account_index} - ❌ 连续 {max_auth_retries} 次调用登录依赖失败，未返回有效AuthCode")
                      log("❌ 登录脚本输出如下：")
                      log(auth_result)
-                 elif auth_result is None:
-                     log(f"账号 {account_index} - ❌ 登录调用超时")
-                 
-                 # 调用API健康检查
-                 if check_health_status():
-                     log(f"账号 {account_index} - ⚠ 验证码API正常，但本账号获取AuthCode失败，跳过该账号")
-                     result['oshwhub_status'] = '获取AuthCode失败'
-                     result['critical_error'] = True
-                     return result
-                 else:
-                     log(f"账号 {account_index} - ❌ 验证码API异常，停止所有账号任务。")
-                     result['oshwhub_status'] = '验证码api异常'
-                     result['stop_all'] = True
+                     result['oshwhub_status'] = 'authCode获取异常'
+                     result['critical_error'] = True  # 标记为严重错误
                      return result
             else:
                 # 成功获取 authCode
@@ -994,16 +973,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
              if isinstance(auth_result_jlc, str):
                  log("❌ 登录脚本输出如下：")
                  log(auth_result_jlc)
-                 
-             if check_health_status():
-                 result['jindou_status'] = '获取AuthCode失败'
-                 result['critical_error'] = True
-             else:
-                 log(f"账号 {account_index} - ❌ 验证码API异常，停止所有账号任务。")
-                 result['jindou_status'] = '验证码api异常'
-                 result['stop_all'] = True
-                 return result
-                 
+             result['jindou_status'] = 'authCode获取异常'
              result['critical_error'] = True # 标记严重错误
         else:
             auth_code_jlc = auth_result_jlc
@@ -1085,8 +1055,20 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         log(f"账号 {account_index} - ❌ 程序执行错误: {e}")
         result['oshwhub_status'] = '执行异常'
     finally:
-        driver.quit()
-        log(f"账号 {account_index} - 浏览器已关闭")
+        # 安全退出 Driver
+        if driver:
+            try:
+                driver.quit()
+                log(f"账号 {account_index} - 浏览器已关闭")
+            except Exception:
+                pass
+        
+        # 清理临时目录
+        if user_data_dir and os.path.exists(user_data_dir):
+            try:
+                shutil.rmtree(user_data_dir, ignore_errors=True)
+            except Exception:
+                pass
     
     return result
 
@@ -1119,25 +1101,19 @@ def process_single_account(username, password, account_index, total_accounts):
         'password_error': False,  # 标记密码错误
         'actual_password': None,  # 实际使用的密码
         'backup_index': -1,  # 使用的备用密码索引，-1表示原密码
-        'critical_error': False,   # 标记严重错误
-        'stop_all': False # 标记是否停止所有账号
+        'critical_error': False   # 标记严重错误
     }
     
     merged_success = {'oshwhub': False, 'jindou': False}
 
     for attempt in range(max_retries + 1):  # 第一次执行 + 重试次数
-        result = sign_in_account(username, password, account_index, total_accounts, retry_count=attempt)
+        try:
+            result = sign_in_account(username, password, account_index, total_accounts, retry_count=attempt)
+        except Exception as e:
+            log(f"账号 {account_index} - ⚠ 发生未捕获异常，将进行重试: {e}")
+            result = merged_result.copy()
+            result['oshwhub_status'] = '程序异常'
         
-        # 检查是否需要停止所有账号
-        if result.get('stop_all'):
-            merged_result['stop_all'] = True
-            if result['oshwhub_status'] == '验证码api异常':
-                merged_result['oshwhub_status'] = '验证码api异常'
-            if result['jindou_status'] == '验证码api异常':
-                merged_result['jindou_status'] = '验证码api异常'
-            # 即使停止，也要保存当前已有的信息（如果有）
-            break
-
         # 如果检测到密码错误，立即停止重试
         if result.get('password_error'):
             merged_result['password_error'] = True
@@ -1332,6 +1308,23 @@ def push_summary():
         except Exception as e:
             log(f"自定义API-推送异常: {e}")
 
+def calculate_year_end_prediction(current_beans):
+    """计算年底金豆预测数量"""
+    try:
+        now = datetime.now()
+        year_end = datetime(now.year, 12, 31)
+        # 计算剩余天数（从明天开始算）
+        remaining_days = (year_end - now).days
+        if remaining_days < 0:
+            remaining_days = 0
+            
+        # 按照一周大约22个金豆计算
+        # 每天平均约 22/7 个
+        estimated_future_beans = int(remaining_days * (22 / 7))
+        return current_beans + estimated_future_beans
+    except Exception:
+        return current_beans
+
 def main():
     global in_summary
     
@@ -1366,27 +1359,6 @@ def main():
         log(f"开始处理第 {i} 个账号")
         result = process_single_account(username, password, i, total_accounts)
         all_results.append(result)
-        
-        if result.get('stop_all'):
-            log("🛑 检测到验证码API异常信号，终止后续账号处理，直接输出总结")
-            # 填充剩余账号为异常状态
-            for j in range(i + 1, total_accounts + 1):
-                dummy_result = {
-                    'account_index': j,
-                    'nickname': '未知',
-                    'oshwhub_status': '验证码api异常',
-                    'jindou_status': '验证码api异常',
-                    'oshwhub_success': False,
-                    'jindou_success': False,
-                    'initial_points': 0, 'final_points': 0, 'points_reward': 0, 'reward_results': [],
-                    'initial_jindou': 0, 'final_jindou': 0, 'jindou_reward': 0, 'has_jindou_reward': False,
-                    'retry_count': 0,
-                    'password_error': False,
-                    'actual_password': None,
-                    'backup_index': -1
-                }
-                all_results.append(dummy_result)
-            break
         
         if i < total_accounts:
             wait_time = random.randint(3, 5)
@@ -1449,6 +1421,10 @@ def main():
             log(f"  ├── 金豆签到: {result['jindou_status']}")
             
             # 显示金豆变化
+            current_jindou = result['final_jindou']
+            if current_jindou == 0 and result['initial_jindou'] > 0:
+                current_jindou = result['initial_jindou']
+                
             if result['jindou_reward'] > 0:
                 jindou_text = f"  ├── 金豆变化: {result['initial_jindou']} → {result['final_jindou']} (+{result['jindou_reward']})"
                 if result['has_jindou_reward']:
@@ -1459,6 +1435,11 @@ def main():
                 log(f"  ├── 金豆变化: {result['initial_jindou']} → {result['final_jindou']} (0)")
             else:
                 log(f"  ├── 金豆状态: 无法获取金豆信息")
+            
+            # 预测年底金豆
+            if current_jindou > 0:
+                predicted_beans = calculate_year_end_prediction(current_jindou)
+                log(f"  ├── 预计年底: ≈{predicted_beans} 金豆 (按周均22个预测)")
             
             # 显示礼包领取结果
             for reward_result in result['reward_results']:
