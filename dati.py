@@ -525,26 +525,28 @@ def get_exam_score(driver):
 def perform_exam_process(driver, max_retries=3):
     """
     执行答题流程（从打开中转页到获取分数）
-    使用同一个浏览器实例重试，最多3次
+    使用同一个浏览器实例重试
     """
     for exam_attempt in range(max_retries):
-        log(f"📝 开始答题流程 (尝试 {exam_attempt + 1}/{max_retries})...")
+        log(f"📝 开始答题流程 (第 {exam_attempt + 1}/{max_retries} 次尝试)...")
         
         try:
-            # 步骤 1: 提取链接 (内部重试3次)
+            # 步骤 1: 提取链接 (内部重试5次)
+            # 这里是针对页面加载超时/资源卡住的专门重试
             real_exam_url = None
-            for extract_attempt in range(3):
+            extraction_max_retries = 5
+            
+            for extract_attempt in range(extraction_max_retries):
                 real_exam_url = extract_real_exam_url(driver, retry_attempt=extract_attempt)
                 if real_exam_url:
                     break
-                log(f"⚠ 提取链接失败，重试 ({extract_attempt+1}/3)...")
+                log(f"⚠ 提取链接失败，重试 ({extract_attempt+1}/{extraction_max_retries})...")
                 time.sleep(3)
                 
             if not real_exam_url:
-                raise Exception("无法提取考试链接")
+                raise Exception(f"无法提取考试链接 (重试{extraction_max_retries}次均失败)")
             
             # 步骤 2: 直接跳转到真实考试页面
-            # 添加超时处理
             try:
                 driver.get(real_exam_url)
             except TimeoutException:
@@ -561,17 +563,21 @@ def perform_exam_process(driver, max_retries=3):
                 
             # 步骤 5: 获取分数
             score = get_exam_score(driver)
+            
             if score is not None:
-                # 如果得分不是0分且小于60分，则该账号答题流程重试
-                if 0 < score < 60:
+                # 只有及格才算真正成功返回
+                if score >= 60:
+                    return True, score
+                else:
+                    # 分数不及格处理逻辑
                     if exam_attempt < max_retries - 1:
-                        log(f"⚠ 分数 {score} 不及格，正在补考。。。 (剩余机会: {max_retries - 1 - exam_attempt})...")
+                        log(f"⚠ 分数 {score} 不及格，正在准备补考... (剩余机会: {max_retries - 1 - exam_attempt})")
                         time.sleep(3)
+                        # 强制进入下一次外层循环进行补考
                         continue
                     else:
-                        log(f"❌ 不及格已达最大次数，最终分数: {score}")
-
-                return True, score
+                        log(f"❌ 不及格重试已达最大次数，最终分数: {score}")
+                        return True, score
             else:
                 raise Exception("未能获取到分数")
                 
@@ -724,6 +730,7 @@ def process_single_account(username, password, account_index, total_accounts):
                 
                 # --- 阶段 2: 答题流程 ---
                 # 登录成功，开始答题
+                # 注意：这里调用修改后的函数，它内部处理了提取链接重试(5次)和分数补考逻辑
                 exam_success, score = perform_exam_process(driver, max_retries=3)
                 
                 if exam_success and score is not None:
