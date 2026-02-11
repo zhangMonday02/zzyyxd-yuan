@@ -44,7 +44,7 @@ class AliV3:
         url = 'http://114.66.33.227:8000/api/captcha/solve'
 
         request_data = {
-            'type': 'slide',
+            'type': 'gap',
             'timeout': 60,
             'scene_id': '6mw4mrmg',
             'prefix': '1tbpug',
