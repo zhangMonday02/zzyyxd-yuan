@@ -65,7 +65,7 @@ class AliV3:
             'timeout': 60,
             'scene_id': '6mw4mrmg',
             'prefix': '1tbpug',
-              # 启用拦截模式
+            'intercept_mode': True  # 启用拦截模式
         }
 
         try:
@@ -311,7 +311,5 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
-
-
 
 
