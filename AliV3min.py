@@ -44,11 +44,11 @@ class AliV3:
         url = 'http://114.66.33.227:8000/api/captcha/solve'
 
         request_data = {
-            'type': 'click',
+            'type': 'slide',
             'timeout': 60,
             'scene_id': '6mw4mrmg',
             'prefix': '1tbpug',
-            # 启用拦截模式
+            'intercept_mode': True  # 启用拦截模式
         }
 
         try:
