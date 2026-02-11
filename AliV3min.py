@@ -48,7 +48,7 @@ class AliV3:
             'timeout': 60,
             'scene_id': '6mw4mrmg',
             'prefix': '1tbpug',
-            'intercept_mode': True  # 启用拦截模式
+            # 启用拦截模式
         }
 
         try:
