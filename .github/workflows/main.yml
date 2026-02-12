@@ -116,13 +116,31 @@ jobs:
       - name: '安装依赖'
         run: |
           pip install --upgrade pip
-          pip install -r ./requirements.txt
+          pip install requests==2.26.0
+          pip install lxml==4.6.5
+          pip install selenium==3.141.0
+          pip install retrying==1.3.3
+          pip install wheel==0.37.1
+          pip install serverchan_sdk==1.0.6
           pip install PyExecJS
+          pip install DrissionPage
 
       - name: '准备Chrome驱动'
         uses: nanasess/setup-chromedriver@v2
+
+      - name: '安装Xvfb虚拟显示器'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: '启动虚拟显示器'
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
         
       - name: '运行签到脚本'
+        env:
+          DISPLAY: ':99'
         run: |
           echo "正在运行第 ${{ matrix.index }} 组账号..."
           python ./jlc.py "${{ matrix.users }}" "${{ matrix.pwds }}" "true"
