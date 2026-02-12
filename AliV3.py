@@ -4,7 +4,11 @@ import subprocess
 import time
 import sys
 import textwrap
+import random
+import math
 from functools import partial
+from urllib.parse import parse_qs, unquote
+from DrissionPage import ChromiumPage, ChromiumOptions
 
 subprocess.Popen = partial(subprocess.Popen, encoding='utf-8', errors='ignore')
 
@@ -18,7 +22,7 @@ class AliV3:
     def __init__(self):
         self.captchaTicket = None
         self.CertifyId = None
-        self.author = '古月&zhangMonday'
+        self.author = 'zhangMonday'
         
         # 初始化账号密码变量，用于在 Sumbit_All 中重试时调用
         self.username = None
@@ -27,7 +31,7 @@ class AliV3:
         # 缓存文件名称
         self.cookie_cache_file = 'cookie_cache.json'
         
-        # API获取的验证参数
+        # 获取的验证参数
         self.verifyParam = None
         self.deviceToken = None
 
@@ -48,63 +52,239 @@ class AliV3:
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
         }
+        
+        # 拦截到的数据容器
+        self.intercepted_data = None
 
-    def getCap(self):
-        API_KEY = 'ak_qr9qPLAmVnwkv0Pm8O7HXsSu43Udnq6dhQJnAvYNtO0'  # jlc 31天
+    def _setup_browser(self):
+        """配置并启动 DrissionPage"""
+        co = ChromiumOptions()
+        co.set_argument('--headless=new')  # 无头模式
+        co.set_argument('--no-sandbox')
+        co.set_argument('--window-size=415,900') # 页面大小设置为415*900
+        
+        # 防检测参数
+        co.set_argument('--disable-blink-features=AutomationControlled')
+        co.set_pref('credentials_enable_service', False)
+        
+        # 随机 User-Agent
+        ua_list = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        ]
+        co.set_user_agent(random.choice(ua_list))
 
-        def get_headers():
-            headers = {'Content-Type': 'application/json'}
-            if API_KEY:
-                headers['X-API-Key'] = API_KEY
-            return headers
+        return ChromiumPage(addr_or_opts=co)
 
-        url = 'http://114.66.33.227:8000/api/captcha/solve'
-
-        request_data = {
-            'type': 'slide',
-            'timeout': 60,
-            'scene_id': '6mw4mrmg',
-            'prefix': '1tbpug',
-            'intercept_mode': True  # 启用拦截模式
-        }
-
+    def _slide_logic(self, page):
+        """基于JS脚本逻辑的Python实现"""
         try:
-            response = requests.post(
-                url,
-                json=request_data,
-                headers=get_headers(),
-                timeout=120
-            )
-
-            print(response.json())
+            slider = page.ele('#aliyunCaptcha-sliding-slider')
+            wrapper = page.ele('#aliyunCaptcha-sliding-wrapper')
             
-            resp_json = response.json()
-            if 'verifyParam' in resp_json:
-                verify_param_str = resp_json['verifyParam']
-                json_data = json.loads(verify_param_str)
-                
-                self.verifyParam = json_data['data']
-                self.deviceToken = json_data['deviceToken']
-                self.CertifyId = json_data['certifyId']
-                return True
-            else:
-                print("Error: verifyParam not found in API response")
+            if not slider or not wrapper:
+                print("❌ 未找到滑块元素")
                 return False
 
+            # 获取位置信息
+            slider_rect = slider.rect
+            wrapper_rect = wrapper.rect
+            
+            # 计算起点 (slider 中心)
+            start_x = slider_rect.location[0] + slider_rect.size[0] / 2
+            start_y = slider_rect.location[1] + slider_rect.size[1] / 2
+            
+            # 需要滑动的距离
+            distance_needed = wrapper_rect.size[0] - slider_rect.size[0]
+            
+            # 1. 过冲: 20-80px
+            overshoot = 20 + random.random() * 60
+            end_x = start_x + distance_needed + overshoot
+            
+            # 2. Y轴大幅漂移
+            y_drift = (random.random() - 0.5) * 100
+            end_y = start_y + y_drift
+            
+            # 3. 时间: 200ms - 500ms
+            total_duration_ms = 200 + random.random() * 300
+            start_time = time.time() * 1000
+            
+            print(f"📍 起点: ({int(start_x)}, {int(start_y)})")
+            print(f"🏁 终点 (含过冲 {int(overshoot)}px): ({int(end_x)}, {int(end_y)})")
+            
+            # 4. 执行滑动 (使用 CDP Input.dispatchMouseEvent 以获得更细粒度的控制)
+            
+            # MouseDown
+            page.run_cdp('Input.dispatchMouseEvent', type='mousePressed', x=start_x, y=start_y, button='left', clickCount=1)
+            
+            while True:
+                now = time.time() * 1000
+                elapsed = now - start_time
+                progress = elapsed / total_duration_ms
+                
+                if progress > 1:
+                    progress = 1
+                
+                # EaseOutQuart
+                ease = 1 - pow(1 - progress, 4)
+                
+                current_x = start_x + (end_x - start_x) * ease
+                
+                current_y_drift = y_drift * ease
+                jitter = (random.random() - 0.5) * 6
+                current_y = start_y + current_y_drift + jitter
+                
+                # MouseMove
+                page.run_cdp('Input.dispatchMouseEvent', type='mouseMoved', x=current_x, y=current_y)
+                
+                if progress >= 1:
+                    break
+                
+                # 随机间隔 5-10ms
+                time.sleep((5 + random.random() * 5) / 1000)
+            
+            # 4.3 极短停顿
+            time.sleep(random.random() * 0.05)
+            
+            # 4.4 MouseUp (在过冲位置直接松开)
+            page.run_cdp('Input.dispatchMouseEvent', type='mouseReleased', x=end_x, y=end_y, button='left', clickCount=1)
+            print(f"🖱️ 滑动完成，耗时 {int(time.time()*1000 - start_time)}ms")
+            
+            return True
+
         except Exception as e:
-            print(f"getCap Error: {e}")
+            print(f"滑动过程出错: {e}")
             return False
+
+    def getCap(self):
+        page = self._setup_browser()
+        target_url = "https://aliv3.zhangmonday.top/?prefix=1tbpug&SceneId=6mw4mrmg"
+        
+        # 定义拦截回调
+        def on_request_paused(**kwargs):
+            try:
+                req_id = kwargs['requestId']
+                request = kwargs.get('request', {})
+                url = request.get('url', '')
+                
+                # 目标：拦截 https://1tbpug.captcha-open.aliyuncs.com/
+                if '1tbpug.captcha-open.aliyuncs.com' in url:
+                    # 获取 Payload
+                    post_data = request.get('postData')
+                    
+                    # 只有当请求包含 CaptchaVerifyParam 时才拦截
+                    if post_data and 'CaptchaVerifyParam' in post_data:
+                        print(f"🛑 拦截到目标验证请求: {url}")
+                        self.intercepted_data = post_data
+                        print("✅ 已提取请求载荷")
+                        page.run_cdp('Fetch.failRequest', requestId=req_id, errorReason='Aborted')
+                    else:
+                        # 放行初始化请求或其他非验证请求
+                        # print(f"⏩ 放行普通请求: {url}")
+                        page.run_cdp('Fetch.continueRequest', requestId=req_id)
+                else:
+                    # 放行其他请求
+                    page.run_cdp('Fetch.continueRequest', requestId=req_id)
+            except Exception as e:
+                # 防止回调报错影响流程
+                try:
+                    page.run_cdp('Fetch.continueRequest', requestId=kwargs['requestId'])
+                except:
+                    pass
+
+        try:
+            # 启用 Fetch 拦截
+            page.run_cdp('Fetch.enable', patterns=[{'urlPattern': '*'}])
+            # 设置回调
+            page.driver.set_callback('Fetch.requestPaused', on_request_paused)
+            
+            max_retries = 10
+            for attempt in range(1, max_retries + 1):
+                print(f"\n🔄 第 {attempt}/{max_retries} 次尝试获取验证码...")
+                self.intercepted_data = None
+                self.verifyParam = None
+                self.deviceToken = None
+                self.CertifyId = None
+                
+                # 打开/刷新页面
+                page.get(target_url)
+                
+                # 等待滑块元素出现
+                # 使用 ele_displayed 确保元素可见
+                if not page.wait.ele_displayed('#aliyunCaptcha-sliding-slider', timeout=8):
+                    print("加载滑块超时，刷新重试...")
+                    continue
+                
+                # 执行自动化过滑块逻辑
+                if not self._slide_logic(page):
+                    continue
+                
+                # 等待拦截数据 (最多8秒)
+                print("⏳ 等待拦截 CaptchaVerifyParam...")
+                wait_start = time.time()
+                while time.time() - wait_start < 8:
+                    if self.intercepted_data:
+                        break
+                    time.sleep(0.1)
+                
+                if not self.intercepted_data:
+                    print("❌ 超时未拦截到验证数据，重试...")
+                    continue
+                
+                # 解析拦截到的数据
+                try:
+                    # 数据格式: AccessKeyId=...&CaptchaVerifyParam=...
+                    parsed = parse_qs(self.intercepted_data)
+                    if 'CaptchaVerifyParam' in parsed:
+                        # CaptchaVerifyParam 是 URL 编码的 JSON 字符串
+                        verify_param_json = parsed['CaptchaVerifyParam'][0]
+                        json_data = json.loads(verify_param_json)
+                        
+                        self.verifyParam = json_data.get('data')
+                        self.deviceToken = json_data.get('deviceToken')
+                        self.CertifyId = json_data.get('certifyId')
+                        
+                        print("🎉 成功解析验证参数")
+                        
+                        # 立即调用 check-ali-captcha
+                        check_res = self.Sumbit_All()
+                        
+                        # 检查验证结果
+                        if check_res and check_res.get('success') and check_res.get('code') == 200:
+                            res_data = check_res.get('data', {})
+                            if res_data.get('checkSuccess') is False:
+                                print(f"❌ 滑块验证失败: {res_data.get('errMessage')}，重试...")
+                                continue
+                            elif 'captchaTicket' in res_data:
+                                print("✅ 滑块验证成功！")
+                                return True
+                        
+                        print(f"❌ 接口验证返回异常: {check_res}，重试...")
+                    else:
+                        print("❌ 拦截数据中缺失 CaptchaVerifyParam，重试...")
+                
+                except Exception as e:
+                    print(f"❌ 解析数据或验证异常: {e}，重试...")
+                    continue
+
+            print("❌ 达到最大重试次数，获取滑块验证失败。")
+            return False
+
+        finally:
+            page.quit()
 
     def Sumbit_All(self):
         if not self.verifyParam:
             print("Missing verifyParam, skipping Sumbit_All")
-            return
+            return None
 
         _data = self.verifyParam
         deviceToekn = self.deviceToken
 
         print('deviceToekn', deviceToekn)
-        print('_data', _data)
+        # print('_data', _data) # 数据太长，注释掉
 
         import requests
 
@@ -146,22 +326,32 @@ class AliV3:
             'aliyunSceneId': '6mw4mrmg',
         }
 
-        response = requests.post(
-            'https://passport.jlc.com/api/cas/captcha/v2/check-ali-captcha',
-            cookies=cookies,
-            headers=headers,
-            json=json_data
-        )
-
-        print(response.status_code)
-        
-        print('Request Body:', json.dumps(json_data, indent=4, ensure_ascii=False))
-        print(response.text)
-        
         try:
-            self.captchaTicket = response.json()['data']['captchaTicket']
+            response = requests.post(
+                'https://passport.jlc.com/api/cas/captcha/v2/check-ali-captcha',
+                cookies=cookies,
+                headers=headers,
+                json=json_data
+            )
+
+            print(f"Check API Status: {response.status_code}")
+            # print('Request Body:', json.dumps(json_data, indent=4, ensure_ascii=False))
+            print("Check API Response:", response.text)
+            
+            resp_json = response.json()
+            
+            try:
+                # 尝试获取 ticket
+                if resp_json.get('success') and resp_json.get('data', {}).get('captchaTicket'):
+                    self.captchaTicket = resp_json['data']['captchaTicket']
+            except Exception as e:
+                print("Failed to get captchaTicket from response:", e)
+
+            return resp_json
+
         except Exception as e:
-            print("Failed to get captchaTicket:", e)
+            print(f"Sumbit_All Error: {e}")
+            return None
 
     def get_cached_cookies_headers(self):
         """
@@ -186,11 +376,11 @@ class AliV3:
                     print("缓存有效 (小于20分钟)，使用缓存的 Cookies 和 Headers。")
                     return cached_data.get('cookies'), cached_data.get('headers')
                 else:
-                    print(f"缓存已过期 (上次更新: {time.ctime(last_time)})，重新获取...")
+                    print(f"cookie缓存已过期 (上次更新: {time.ctime(last_time)})，重新获取...")
             except Exception as e:
-                print(f"读取缓存文件出错: {e}，将重新获取。")
+                print(f"读取cookie缓存文件出错: {e}，将重新获取。")
         else:
-            print("缓存文件不存在，开始获取...")
+            print("cookie缓存文件不存在，开始获取...")
 
         # 调用 getcookie.py 获取
         cookies = None
@@ -286,18 +476,14 @@ class AliV3:
         self.username = username
         self.password = password
 
-        # 使用 API 获取验证码
+        # 使用 DrissionPage 获取验证码
         if self.getCap():
-            # 提交验证并获取 ticket
-            res = self.Sumbit_All()
-            
             # 传递加密后的账号密码进行登录
             enc_username = pwdEncrypt(username)
             enc_password = pwdEncrypt(password)
             self.Login(enc_username, enc_password)
-            return res
         else:
-            print("验证码获取失败，无法继续。")
+            print("验证码流程失败，无法继续登录。")
 
 
 if __name__ == '__main__':
@@ -311,5 +497,3 @@ if __name__ == '__main__':
     else:
         print("用法: python AliV3.py <username> <password>")
         print("示例: python AliV3.py 13800138000 MyPassword123")
-
-
