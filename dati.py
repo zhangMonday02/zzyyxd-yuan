@@ -797,17 +797,77 @@ def main():
     # 输出初始信息
     log(f"检测到有 {len(usernames)} 个账号需要答题，失败退出功能已{'开启' if fail_exit else '未开启'}", show_time=False)
     
-    all_results = []
+    # 存储账号信息以便重试
+    accounts_list = []
     for i, (u, p) in enumerate(zip(usernames, passwords), 1):
-        log(f"\n{'='*40}\n正在处理账号 {i}\n{'='*40}", show_time=False)
-        res = process_single_account(u, p, i, len(usernames))
-        all_results.append(res)
-        if i < len(usernames): 
+        accounts_list.append({
+            'username': u,
+            'password': p,
+            'index': i,
+            'result': None
+        })
+
+    # 第一轮运行
+    for i, acc in enumerate(accounts_list):
+        log(f"\n{'='*40}\n正在处理账号 {acc['index']}\n{'='*40}", show_time=False)
+        res = process_single_account(acc['username'], acc['password'], acc['index'], len(usernames))
+        acc['result'] = res
+        if i < len(accounts_list) - 1: 
             time.sleep(5)
+            
+    # 最终重试逻辑
+    failed_accounts = [acc for acc in accounts_list if not acc['result']['success']]
+    
+    if failed_accounts:
+        log("\n" + "="*40, show_time=False)
+        log(f"🔄 检测到 {len(failed_accounts)} 个账号失败，开始最终重试流程", show_time=False)
+        log("="*40, show_time=False)
+        
+        for i, acc in enumerate(failed_accounts):
+            idx = acc['index']
+            u = acc['username']
+            p = acc['password']
+            original_result = acc['result']
+            original_reason = original_result.get('failure_reason')
+            
+            log(f"\n🔄 [账号 {idx}] 第一次最终重试 (原失败原因: {original_reason})", show_time=False)
+            
+            # 第一次重试
+            retry_res_1 = process_single_account(u, p, idx, len(usernames))
+            
+            if retry_res_1['success']:
+                log(f"✅ [账号 {idx}] 重试成功", show_time=False)
+                acc['result'] = retry_res_1
+            else:
+                reason_1 = retry_res_1.get('failure_reason')
+                log(f"❌ [账号 {idx}] 重试失败 (原因: {reason_1})", show_time=False)
+                
+                if reason_1 == original_reason:
+                    log(f"⚠ [账号 {idx}] 失败原因未改变，放弃继续重试", show_time=False)
+                    acc['result'] = retry_res_1
+                else:
+                    log(f"❓ [账号 {idx}] 失败原因改变 (原: {original_reason} -> 新: {reason_1})，进行最后一次重试", show_time=False)
+                    time.sleep(2)
+                    
+                    # 第二次重试
+                    retry_res_2 = process_single_account(u, p, idx, len(usernames))
+                    acc['result'] = retry_res_2
+                    
+                    if retry_res_2['success']:
+                        log(f"✅ [账号 {idx}] 第二次重试成功", show_time=False)
+                    else:
+                        log(f"❌ [账号 {idx}] 第二次重试失败 (原因: {retry_res_2.get('failure_reason')})", show_time=False)
+
+            if i < len(failed_accounts) - 1:
+                time.sleep(3)
         
     log("\n" + "="*40, show_time=False)
     log("📊 立创答题结果总结", show_time=False)
     log("="*40, show_time=False)
+    
+    # 重新提取结果
+    all_results = [acc['result'] for acc in accounts_list]
+    
     has_failure = False
     for res in all_results:
         if res['success']: 
