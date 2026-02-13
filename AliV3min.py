@@ -65,6 +65,35 @@ class AliV3:
         co.set_argument('--disable-blink-features=AutomationControlled')
         co.set_pref('credentials_enable_service', False)
         
+        co.set_argument('--disable-gpu')
+        co.set_argument('--disable-dev-shm-usage')
+        co.set_argument('--disable-extensions')
+        co.set_argument('--disable-logging')
+        co.set_argument('--disable-background-networking')
+        co.set_argument('--disable-default-apps')
+        co.set_argument('--disable-sync')
+        co.set_argument('--disable-translate')
+        co.set_argument('--no-first-run')
+        co.set_argument('--safebrowsing-disable-auto-update')
+        co.set_argument('--ignore-certificate-errors')
+        co.set_argument('--ignore-ssl-errors')
+        co.set_argument('--disable-web-security')
+        co.set_argument('--allow-running-insecure-content')
+        co.set_argument('--disable-features=IsolateOrigins,site-per-process')
+        co.set_argument('--disable-site-isolation-trials')
+        co.set_argument('--single-process')
+        co.set_argument('--disable-setuid-sandbox')
+        co.set_argument('--disable-hang-monitor')
+        co.set_argument('--disable-popup-blocking')
+        co.set_argument('--disable-prompt-on-repost')
+        co.set_argument('--disable-backgrounding-occluded-windows')
+        co.set_argument('--disable-renderer-backgrounding')
+        co.set_argument('--disable-ipc-flooding-protection')
+        co.set_argument('--memory-pressure-off')
+        co.set_argument('--js-flags=--max-old-space-size=512')
+        
+        co.set_timeouts(base=60, page_load=60, script=60)
+        
         # 随机 User-Agent
         ua_list = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -74,13 +103,42 @@ class AliV3:
         ]
         co.set_user_agent(random.choice(ua_list))
 
-        return ChromiumPage(addr_or_opts=co)
+        page = ChromiumPage(addr_or_opts=co)
+        page.set.timeouts(base=60, page_load=60, script=60)
+        
+        return page
+
+    def _safe_quit_browser(self, page):
+        """安全关闭浏览器"""
+        if page is None:
+            return
+        try:
+            page.quit()
+        except Exception:
+            pass
+        try:
+            if hasattr(page, '_browser') and page._browser:
+                page._browser.quit()
+        except Exception:
+            pass
+
+    def _run_cdp_safe(self, page, method, **kwargs):
+        """安全执行 CDP 命令"""
+        max_retries = 3
+        for i in range(max_retries):
+            try:
+                return page.run_cdp(method, **kwargs)
+            except Exception as e:
+                if i < max_retries - 1:
+                    time.sleep(0.5)
+                else:
+                    raise e
 
     def _slide_logic(self, page):
         """基于JS脚本逻辑的Python实现"""
         try:
-            slider = page.ele('#aliyunCaptcha-sliding-slider')
-            wrapper = page.ele('#aliyunCaptcha-sliding-wrapper')
+            slider = page.ele('#aliyunCaptcha-sliding-slider', timeout=5)
+            wrapper = page.ele('#aliyunCaptcha-sliding-wrapper', timeout=5)
             
             if not slider or not wrapper:
                 print("❌ 未找到滑块元素")
@@ -115,7 +173,7 @@ class AliV3:
             # 4. 执行滑动 (使用 CDP Input.dispatchMouseEvent 以获得更细粒度的控制)
             
             # MouseDown
-            page.run_cdp('Input.dispatchMouseEvent', type='mousePressed', x=start_x, y=start_y, button='left', clickCount=1)
+            self._run_cdp_safe(page, 'Input.dispatchMouseEvent', type='mousePressed', x=start_x, y=start_y, button='left', clickCount=1)
             
             while True:
                 now = time.time() * 1000
@@ -135,7 +193,7 @@ class AliV3:
                 current_y = start_y + current_y_drift + jitter
                 
                 # MouseMove
-                page.run_cdp('Input.dispatchMouseEvent', type='mouseMoved', x=current_x, y=current_y)
+                self._run_cdp_safe(page, 'Input.dispatchMouseEvent', type='mouseMoved', x=current_x, y=current_y)
                 
                 if progress >= 1:
                     break
@@ -147,7 +205,7 @@ class AliV3:
             time.sleep(random.random() * 0.05)
             
             # 4.4 MouseUp (在过冲位置直接松开)
-            page.run_cdp('Input.dispatchMouseEvent', type='mouseReleased', x=end_x, y=end_y, button='left', clickCount=1)
+            self._run_cdp_safe(page, 'Input.dispatchMouseEvent', type='mouseReleased', x=end_x, y=end_y, button='left', clickCount=1)
             print(f"🖱️ 滑动完成，耗时 {int(time.time()*1000 - start_time)}ms")
             
             return True
@@ -157,121 +215,175 @@ class AliV3:
             return False
 
     def getCap(self):
-        page = self._setup_browser()
+        page = None
         target_url = "https://aliv3.zhangmonday.top/?prefix=1tbpug&SceneId=6mw4mrmg"
+        max_browser_retries = 3
         
-        # 定义拦截回调
-        def on_request_paused(**kwargs):
+        for browser_attempt in range(1, max_browser_retries + 1):
             try:
-                req_id = kwargs['requestId']
-                request = kwargs.get('request', {})
-                url = request.get('url', '')
+                print(f"\n🌐 浏览器实例 {browser_attempt}/{max_browser_retries}")
                 
-                # 目标：拦截 https://1tbpug.captcha-open.aliyuncs.com/
-                if '1tbpug.captcha-open.aliyuncs.com' in url:
-                    # 获取 Payload
-                    post_data = request.get('postData')
+                self._safe_quit_browser(page)
+                time.sleep(1)
+                
+                page = self._setup_browser()
+                
+                # 定义拦截回调
+                def on_request_paused(**kwargs):
+                    try:
+                        req_id = kwargs['requestId']
+                        request = kwargs.get('request', {})
+                        url = request.get('url', '')
+                        
+                        # 目标：拦截 https://1tbpug.captcha-open.aliyuncs.com/
+                        if '1tbpug.captcha-open.aliyuncs.com' in url:
+                            # 获取 Payload
+                            post_data = request.get('postData')
+                            
+                            # 只有当请求包含 CaptchaVerifyParam 时才拦截
+                            if post_data and 'CaptchaVerifyParam' in post_data:
+                                print(f"🛑 拦截到目标验证请求: {url}")
+                                self.intercepted_data = post_data
+                                print("✅ 已提取请求载荷")
+                                try:
+                                    page.run_cdp('Fetch.failRequest', requestId=req_id, errorReason='Aborted')
+                                except Exception:
+                                    pass
+                            else:
+                                # 放行初始化请求或其他非验证请求
+                                # print(f"⏩ 放行普通请求: {url}")
+                                try:
+                                    page.run_cdp('Fetch.continueRequest', requestId=req_id)
+                                except Exception:
+                                    pass
+                        else:
+                            # 放行其他请求
+                            try:
+                                page.run_cdp('Fetch.continueRequest', requestId=req_id)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        # 防止回调报错影响流程
+                        try:
+                            page.run_cdp('Fetch.continueRequest', requestId=kwargs['requestId'])
+                        except:
+                            pass
+
+                # 启用 Fetch 拦截
+                self._run_cdp_safe(page, 'Fetch.enable', patterns=[{'urlPattern': '*'}])
+                # 设置回调
+                page.driver.set_callback('Fetch.requestPaused', on_request_paused)
+                
+                max_retries = 10
+                for attempt in range(1, max_retries + 1):
+                    print(f"\n🔄 第 {attempt}/{max_retries} 次尝试获取验证码...")
+                    self.intercepted_data = None
+                    self.verifyParam = None
+                    self.deviceToken = None
+                    self.CertifyId = None
                     
-                    # 只有当请求包含 CaptchaVerifyParam 时才拦截
-                    if post_data and 'CaptchaVerifyParam' in post_data:
-                        print(f"🛑 拦截到目标验证请求: {url}")
-                        self.intercepted_data = post_data
-                        print("✅ 已提取请求载荷")
-                        page.run_cdp('Fetch.failRequest', requestId=req_id, errorReason='Aborted')
-                    else:
-                        # 放行初始化请求或其他非验证请求
-                        # print(f"⏩ 放行普通请求: {url}")
-                        page.run_cdp('Fetch.continueRequest', requestId=req_id)
+                    try:
+                        # 打开/刷新页面
+                        page.get(target_url, timeout=30)
+                    except Exception as e:
+                        print(f"页面加载异常: {e}")
+                        if 'timeout' in str(e).lower() or 'stuck' in str(e).lower():
+                            print("检测到浏览器超时，准备重启浏览器...")
+                            break
+                        continue
+                    
+                    time.sleep(1)
+                    
+                    # 等待滑块元素出现
+                    # 使用 ele_displayed 确保元素可见
+                    try:
+                        if not page.wait.ele_displayed('#aliyunCaptcha-sliding-slider', timeout=10):
+                            print("加载滑块超时，刷新重试...")
+                            continue
+                    except Exception as e:
+                        print(f"等待滑块元素异常: {e}")
+                        if 'timeout' in str(e).lower() or 'stuck' in str(e).lower():
+                            print("检测到浏览器超时，准备重启浏览器...")
+                            break
+                        continue
+                    
+                    time.sleep(0.5)
+                    
+                    # 执行自动化过滑块逻辑
+                    try:
+                        if not self._slide_logic(page):
+                            continue
+                    except Exception as e:
+                        print(f"滑块逻辑异常: {e}")
+                        if 'timeout' in str(e).lower() or 'stuck' in str(e).lower():
+                            print("检测到浏览器超时，准备重启浏览器...")
+                            break
+                        continue
+                    
+                    # 等待拦截数据 (最多10秒)
+                    print("⏳ 等待拦截 CaptchaVerifyParam...")
+                    wait_start = time.time()
+                    while time.time() - wait_start < 10:
+                        if self.intercepted_data:
+                            break
+                        time.sleep(0.1)
+                    
+                    if not self.intercepted_data:
+                        print("❌ 超时未拦截到验证数据，重试...")
+                        continue
+                    
+                    # 解析拦截到的数据
+                    try:
+                        # 数据格式: AccessKeyId=...&CaptchaVerifyParam=...
+                        parsed = parse_qs(self.intercepted_data)
+                        if 'CaptchaVerifyParam' in parsed:
+                            # CaptchaVerifyParam 是 URL 编码的 JSON 字符串
+                            verify_param_json = parsed['CaptchaVerifyParam'][0]
+                            json_data = json.loads(verify_param_json)
+                            
+                            self.verifyParam = json_data.get('data')
+                            self.deviceToken = json_data.get('deviceToken')
+                            self.CertifyId = json_data.get('certifyId')
+                            
+                            print("🎉 成功解析验证参数")
+                            
+                            # 立即调用 check-ali-captcha
+                            check_res = self.Sumbit_All()
+                            
+                            # 检查验证结果
+                            if check_res and check_res.get('success') and check_res.get('code') == 200:
+                                res_data = check_res.get('data', {})
+                                if res_data.get('checkSuccess') is False:
+                                    print(f"❌ 滑块验证失败: {res_data.get('errMessage')}，重试...")
+                                    continue
+                                elif 'captchaTicket' in res_data:
+                                    print("✅ 滑块验证成功！")
+                                    self._safe_quit_browser(page)
+                                    return True
+                            
+                            print(f"❌ 接口验证返回异常: {check_res}，重试...")
+                        else:
+                            print("❌ 拦截数据中缺失 CaptchaVerifyParam，重试...")
+                    
+                    except Exception as e:
+                        print(f"❌ 解析数据或验证异常: {e}，重试...")
+                        continue
                 else:
-                    # 放行其他请求
-                    page.run_cdp('Fetch.continueRequest', requestId=req_id)
+                    continue
+                
+                print("🔄 浏览器需要重启...")
+                continue
+
             except Exception as e:
-                # 防止回调报错影响流程
-                try:
-                    page.run_cdp('Fetch.continueRequest', requestId=kwargs['requestId'])
-                except:
-                    pass
+                print(f"浏览器实例异常: {e}")
+                self._safe_quit_browser(page)
+                page = None
+                time.sleep(2)
+                continue
 
-        try:
-            # 启用 Fetch 拦截
-            page.run_cdp('Fetch.enable', patterns=[{'urlPattern': '*'}])
-            # 设置回调
-            page.driver.set_callback('Fetch.requestPaused', on_request_paused)
-            
-            max_retries = 10
-            for attempt in range(1, max_retries + 1):
-                print(f"\n🔄 第 {attempt}/{max_retries} 次尝试获取验证码...")
-                self.intercepted_data = None
-                self.verifyParam = None
-                self.deviceToken = None
-                self.CertifyId = None
-                
-                # 打开/刷新页面
-                page.get(target_url)
-                
-                # 等待滑块元素出现
-                # 使用 ele_displayed 确保元素可见
-                if not page.wait.ele_displayed('#aliyunCaptcha-sliding-slider', timeout=8):
-                    print("加载滑块超时，刷新重试...")
-                    continue
-                
-                # 执行自动化过滑块逻辑
-                if not self._slide_logic(page):
-                    continue
-                
-                # 等待拦截数据 (最多8秒)
-                print("⏳ 等待拦截 CaptchaVerifyParam...")
-                wait_start = time.time()
-                while time.time() - wait_start < 8:
-                    if self.intercepted_data:
-                        break
-                    time.sleep(0.1)
-                
-                if not self.intercepted_data:
-                    print("❌ 超时未拦截到验证数据，重试...")
-                    continue
-                
-                # 解析拦截到的数据
-                try:
-                    # 数据格式: AccessKeyId=...&CaptchaVerifyParam=...
-                    parsed = parse_qs(self.intercepted_data)
-                    if 'CaptchaVerifyParam' in parsed:
-                        # CaptchaVerifyParam 是 URL 编码的 JSON 字符串
-                        verify_param_json = parsed['CaptchaVerifyParam'][0]
-                        json_data = json.loads(verify_param_json)
-                        
-                        self.verifyParam = json_data.get('data')
-                        self.deviceToken = json_data.get('deviceToken')
-                        self.CertifyId = json_data.get('certifyId')
-                        
-                        print("🎉 成功解析验证参数")
-                        
-                        # 立即调用 check-ali-captcha
-                        check_res = self.Sumbit_All()
-                        
-                        # 检查验证结果
-                        if check_res and check_res.get('success') and check_res.get('code') == 200:
-                            res_data = check_res.get('data', {})
-                            if res_data.get('checkSuccess') is False:
-                                print(f"❌ 滑块验证失败: {res_data.get('errMessage')}，重试...")
-                                continue
-                            elif 'captchaTicket' in res_data:
-                                print("✅ 滑块验证成功！")
-                                return True
-                        
-                        print(f"❌ 接口验证返回异常: {check_res}，重试...")
-                    else:
-                        print("❌ 拦截数据中缺失 CaptchaVerifyParam，重试...")
-                
-                except Exception as e:
-                    print(f"❌ 解析数据或验证异常: {e}，重试...")
-                    continue
-
-            print("❌ 达到最大重试次数，获取滑块验证失败。")
-            return False
-
-        finally:
-            page.quit()
+        print("❌ 达到最大重试次数，获取滑块验证失败。")
+        self._safe_quit_browser(page)
+        return False
 
     def Sumbit_All(self):
         if not self.verifyParam:
@@ -329,7 +441,8 @@ class AliV3:
                 'https://passport.jlc.com/api/cas/captcha/v2/check-ali-captcha',
                 cookies=cookies,
                 headers=headers,
-                json=json_data
+                json=json_data,
+                timeout=30
             )
 
             print(f"Check API Status: {response.status_code}")
