@@ -570,8 +570,21 @@ class AliV3:
         cookies, headers = self.get_cached_cookies_headers()
 
         if cookies is None or headers is None:
-            print("错误：未能获取到 Cookies 或 Headers (值为 None)，退出程序。")
-            sys.exit(1)
+            print("检测到 Cookies 或 Headers 为 None，可能是缓存无效，正在删除缓存并重试...")
+            
+            if os.path.exists(self.cookie_cache_file):
+                try:
+                    os.remove(self.cookie_cache_file)
+                    print(f"已删除无效缓存文件: {self.cookie_cache_file}")
+                except Exception as e:
+                    print(f"删除缓存文件失败: {e}")
+            
+            # 重新调用获取
+            cookies, headers = self.get_cached_cookies_headers()
+            
+            if cookies is None or headers is None:
+                print("错误：重试后仍未能获取到 Cookies 或 Headers (值为 None)，退出程序。")
+                sys.exit(1)
 
         json_data = {
             'username': username,
