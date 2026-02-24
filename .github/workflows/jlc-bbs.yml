@@ -1,0 +1,146 @@
+name: 立创社区自动签到抽奖脚本
+
+on:
+  workflow_dispatch: # 手动触发
+  schedule:
+    # 触发时间 (北京时间 10:00, 18:00, 02:00)
+    - cron: '0 02 * * *'
+    - cron: '0 10 * * *'
+    - cron: '0 18 * * *'
+
+jobs:
+  # ==================================================================================
+  # 数据预处理
+  # 读取 Secret JLC_ACCOUNT，清洗数据，按50个一组生成矩阵 JSON
+  # ==================================================================================
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: 解析账号并分组
+        id: set-matrix
+        env:
+          RAW_ACCOUNTS: ${{ secrets.JLC_ACCOUNT }}
+        shell: python
+        run: |
+          import os
+          import json
+          import math
+
+          raw_data = os.environ.get('RAW_ACCOUNTS', '')
+          accounts = []
+          
+          # 清洗数据
+          for line in raw_data.split('\n'):
+              line = line.strip()
+              if not line or line.startswith('#') or ':' not in line:
+                  continue
+              try:
+                  parts = line.split(':', 1)
+                  username = parts[0].strip()
+                  password = parts[1].strip()
+                  if username and password:
+                      accounts.append((username, password))
+              except:
+                  continue
+
+          print(f"Total valid accounts found: {len(accounts)}")
+
+          # 按50个一组切分
+          chunk_size = 50
+          chunks = []
+          total_chunks = math.ceil(len(accounts) / chunk_size)
+
+          for i in range(total_chunks):
+              batch = accounts[i*chunk_size : (i+1)*chunk_size]
+              users_str = ",".join([x[0] for x in batch])
+              pwds_str = ",".join([x[1] for x in batch])
+              
+              chunks.append({
+                  "index": i + 1,
+                  "users": users_str,
+                  "pwds": pwds_str
+              })
+
+          matrix_json = json.dumps(chunks)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={matrix_json}\n")
+
+  # ==================================================================================
+  # 执行签到
+  # ==================================================================================
+  signin-process:
+    needs: generate-matrix
+    runs-on: ubuntu-22.04
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+
+    name: 账号组${{ matrix.index }}
+
+    # 注入环境变量
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      WECHAT_WEBHOOK_KEY: ${{ secrets.WECHAT_WEBHOOK_KEY }}
+      DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      SERVERCHAN_SCKEY: ${{ secrets.SERVERCHAN_SCKEY }}
+      SERVERCHAN3_SCKEY: ${{ secrets.SERVERCHAN3_SCKEY }} # B 特有的支持
+      COOLPUSH_SKEY: ${{ secrets.COOLPUSH_SKEY }}
+      CUSTOM_WEBHOOK: ${{ secrets.CUSTOM_WEBHOOK }}
+
+    steps:
+      - name: '检出代码'
+        uses: actions/checkout@v3
+
+      # --- 环境配置部分  ---
+      - name: '设置Python环境'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: '设置Node.js环境'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: '设置时区为北京时间'
+        run: |
+          sudo timedatectl set-timezone Asia/Shanghai
+          echo "当前时间: $(date)"
+
+      - name: '安装依赖'
+        run: |
+          pip install --upgrade pip
+          pip install requests==2.26.0
+          pip install lxml==4.6.5
+          pip install selenium==3.141.0
+          pip install retrying==1.3.3
+          pip install wheel==0.37.1
+          pip install serverchan_sdk==1.0.6
+          pip install PyExecJS
+          pip install DrissionPage
+
+      - name: '准备Chrome驱动'
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: '安装Xvfb虚拟显示器'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: '启动虚拟显示器'
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+        
+      - name: '运行签到脚本'
+        env:
+          DISPLAY: ':99'
+        run: |
+          echo "正在运行第 ${{ matrix.index }} 组账号..."
+          python ./jlc-bbs.py "${{ matrix.users }}" "${{ matrix.pwds }}" "true"
