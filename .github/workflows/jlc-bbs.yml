@@ -138,7 +138,7 @@ jobs:
           Xvfb :99 -screen 0 1024x768x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
         
-      - name: '运行签到脚本'
+      - name: '运行签到抽奖脚本'
         env:
           DISPLAY: ':99'
         run: |
