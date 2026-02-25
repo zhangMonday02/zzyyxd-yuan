@@ -1311,10 +1311,19 @@ def push_summary():
                 url = f"https://oapi.dingtalk.com/robot/send?access_token={dingtalk_webhook}"
             body = {"msgtype": "text", "text": {"content": full_text}}
             response = requests.post(url, json=body)
-            if response.status_code == 200:
-                log("钉钉-日志已推送")
+            if response.status_code != 200:
+                log(f"钉钉-推送失败 (HTTP {response.status_code}): {response.text}")
             else:
-                log(f"钉钉-推送失败: {response.text}")
+                try:
+                    resp_json = response.json()
+                    errcode = resp_json.get('errcode')
+                    if errcode == 0:
+                        log("钉钉-日志已推送")
+                    else:
+                        errmsg = resp_json.get('errmsg', '未知错误')
+                        log(f"钉钉-推送失败 (errcode={errcode}, errmsg={errmsg})")
+                except Exception as e:
+                    log(f"钉钉-推送响应解析失败: {e}, 原始响应: {response.text}")
         except Exception as e:
             log(f"钉钉-推送异常: {e}")
 
