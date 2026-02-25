@@ -921,10 +921,19 @@ def push_summary(push_text):
         try:
             dd_url = dingtalk if dingtalk.startswith("https://") else f"https://oapi.dingtalk.com/robot/send?access_token={dingtalk}"
             resp = requests.post(dd_url, json={"msgtype": "text", "text": {"content": full_text}}, timeout=15)
-            if resp.status_code == 200:
-                log("钉钉-日志已推送")
+            if resp.status_code != 200:
+                log(f"钉钉-推送失败 (HTTP {resp.status_code}): {resp.text}")
             else:
-                log(f"钉钉-推送失败，返回原文: {resp.text}")
+                try:
+                    resp_json = resp.json()
+                    errcode = resp_json.get("errcode")
+                    if errcode == 0:
+                        log("钉钉-日志已推送")
+                    else:
+                        errmsg = resp_json.get("errmsg", "未知错误")
+                        log(f"钉钉-推送失败 (errcode={errcode}, errmsg={errmsg})")
+                except Exception as e:
+                    log(f"钉钉-推送响应解析失败: {e}, 原始响应: {resp.text}")
         except Exception as e:
             log(f"钉钉-推送异常: {e}")
         pushed_any = True
