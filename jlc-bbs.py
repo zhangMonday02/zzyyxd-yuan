@@ -431,6 +431,82 @@ def send_bbs_request(driver, url, method="POST", body=None, secretkey="", max_re
     return None
 
 
+def is_bbs_auth_error(resp):
+    """检查BBS API响应是否为认证/会话错误"""
+    if not resp or not isinstance(resp, dict):
+        return False
+    code = resp.get("code")
+    msg = resp.get("message", "")
+    if code == 401:
+        return True
+    if "客户不存在" in msg or "未登录" in msg or "会话失效" in msg:
+        return True
+    return False
+
+
+def validate_and_fix_bbs_session(driver, secretkey, target_url, max_fix_attempts=3):
+    """验证BBS会话有效性，如果无效则尝试通过重新触发SSO来修复"""
+    test_resp = send_bbs_request(
+        driver,
+        "https://www.jlc-bbs.com/api/bbs/signInRecordWeb/getSignInfo",
+        "POST", None, secretkey, max_retries=1,
+    )
+
+    if test_resp and not is_bbs_auth_error(test_resp):
+        return secretkey
+
+    if test_resp is None:
+        return secretkey
+
+    auth_msg = test_resp.get("message", "未知")
+    log(f"⚠ BBS会话无效 ({auth_msg})，尝试重新建立会话...")
+
+    for attempt in range(max_fix_attempts):
+        try:
+            log(f"🔄 重新建立BBS会话 (尝试 {attempt + 1}/{max_fix_attempts})...")
+
+            try:
+                driver.get("https://member.jlc.com/")
+            except TimeoutException:
+                driver.execute_script("window.stop();")
+            time.sleep(3)
+
+            try:
+                driver.get("https://www.jlc-bbs.com/")
+            except TimeoutException:
+                driver.execute_script("window.stop();")
+            time.sleep(5)
+
+            try:
+                driver.get(target_url)
+            except TimeoutException:
+                driver.execute_script("window.stop();")
+            time.sleep(10)
+
+            new_sk = extract_secretkey(driver)
+            if not new_sk:
+                log(f"⚠ 重建会话时未能提取 secretkey")
+                continue
+
+            test_resp = send_bbs_request(
+                driver,
+                "https://www.jlc-bbs.com/api/bbs/signInRecordWeb/getSignInfo",
+                "POST", None, new_sk, max_retries=1,
+            )
+
+            if test_resp and not is_bbs_auth_error(test_resp):
+                log("✅ BBS会话已重新建立")
+                return new_sk
+
+            if test_resp:
+                log(f"⚠ BBS会话仍然无效: {test_resp.get('message', '未知')}")
+        except Exception as e:
+            log(f"⚠ 重建BBS会话异常: {e}")
+
+    log("❌ 无法建立有效的BBS会话")
+    return None
+
+
 def get_sign_info(driver, secretkey, label="", max_retries=3):
     """获取签到信息（含当前积分）"""
     for attempt in range(max_retries):
@@ -679,6 +755,16 @@ def process_single_account(username, password, account_index, total_accounts, st
                 log("❌ 无法提取 secretkey，此账号流程异常")
                 result["has_error"] = True
                 result["error_msg"] = "secretkey 提取失败"
+                return result
+
+            # 验证BBS会话有效性，无效则尝试通过SSO重新建立
+            secretkey = validate_and_fix_bbs_session(
+                driver, secretkey, "https://www.jlc-bbs.com/platform/sign"
+            )
+            if not secretkey:
+                log("❌ BBS会话无法建立，此账号流程异常")
+                result["has_error"] = True
+                result["error_msg"] = "BBS会话无效"
                 return result
 
             # 1. 获取签到前积分
