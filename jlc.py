@@ -53,9 +53,6 @@ in_summary = False
 summary_logs = []
 
 # 全局连续失败状态控制
-consecutive_nickname_fails = 0
-skip_nickname_fetch = False
-
 consecutive_oshwhub_fails = 0
 skip_oshwhub_signin = False
 
@@ -858,17 +855,12 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             result['login_success'] = True  # 标记基本登录成功，后续失败计入非登录异常
 
         # 3. 获取用户昵称
-        global skip_nickname_fetch
-        if skip_nickname_fetch:
-            log(f"账号 {account_index} - ⚠ 由于前面账号连续失败，跳过获取用户昵称")
-            result['nickname'] = '未知'
+        time.sleep(2) # 稍作等待确保 Cookie 生效
+        nickname = get_user_nickname_from_api(driver, account_index)
+        if nickname:
+            result['nickname'] = nickname
         else:
-            time.sleep(2) # 稍作等待确保 Cookie 生效
-            nickname = get_user_nickname_from_api(driver, account_index)
-            if nickname:
-                result['nickname'] = nickname
-            else:
-                result['nickname'] = '未知'
+            result['nickname'] = '未知'
 
         # 4. 获取签到前积分数量
         global skip_oshwhub_signin
@@ -1223,19 +1215,8 @@ def process_single_account(username, password, account_index, total_accounts):
     merged_result['jindou_success'] = merged_success['jindou']
 
     # ---------------- 连续失败跳过逻辑 ----------------
-    global consecutive_nickname_fails, skip_nickname_fetch
     global consecutive_oshwhub_fails, skip_oshwhub_signin
     global consecutive_jindou_fails, skip_jindou_signin
-
-    # 检查昵称连续失败 (确保已经通过了开源平台登录)
-    if not skip_nickname_fetch and merged_result['login_success']:
-        if merged_result['nickname'] == '未知':
-            consecutive_nickname_fails += 1
-            if consecutive_nickname_fails >= 3:
-                skip_nickname_fetch = True
-                log("⚠ 连续3个账号获取昵称失败，接下来的账号跳过获取昵称！")
-        else:
-            consecutive_nickname_fails = 0
 
     # 检查开源平台签到连续失败 (确保已经通过了开源平台登录)
     if not skip_oshwhub_signin and merged_result['login_success']:
