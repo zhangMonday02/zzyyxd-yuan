@@ -142,7 +142,7 @@ jobs:
           DISPLAY: ':99'
         run: |
           echo "正在运行第 ${{ matrix.index }} 组账号..."
-          python ./jlc.py "${{ matrix.users }}" "${{ matrix.pwds }}" "true"
+          python ./jlc.py "${{ matrix.users }}" "${{ matrix.pwds }}" "true" "${{ matrix.index }}"
 
       - name: '上传密码修改记录'
         if: always() 
