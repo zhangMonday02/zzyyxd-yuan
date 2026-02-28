@@ -1417,10 +1417,12 @@ def main():
     global in_summary
     
     if len(sys.argv) < 3:
-        print("用法: python jlc.py 账号1,账号2,账号3... 密码1,密码2,密码3... [失败退出标志]")
+        print("用法: python jlc.py 账号1,账号2,账号3... 密码1,密码2,密码3... [失败退出标志] [账号组编号]")
         print("示例: python jlc.py user1,user2,user3 pwd1,pwd2,pwd3")
         print("示例: python jlc.py user1,user2,user3 pwd1,pwd2,pwd3 true")
+        print("示例: python jlc.py user1,user2,user3 pwd1,pwd2,pwd3 true 4")
         print("失败退出标志: 不传或任意值-关闭, true-开启(任意账号签到失败时返回非零退出码)")
+        print("账号组编号: 只能输入数字，输入其他值则忽略")
         sys.exit(1)
     
     usernames = [u.strip() for u in sys.argv[1].split(',') if u.strip()]
@@ -1430,6 +1432,12 @@ def main():
     enable_failure_exit = False
     if len(sys.argv) >= 4:
         enable_failure_exit = (sys.argv[3].lower() == 'true')
+    
+    # 解析第4个参数（账号组编号），只接受纯数字，其他值忽略
+    account_group = None
+    if len(sys.argv) >= 5:
+        if sys.argv[4].isdigit():
+            account_group = sys.argv[4]
     
     log(f"失败退出功能: {'开启' if enable_failure_exit else '关闭'}")
     
@@ -1455,7 +1463,6 @@ def main():
     
     # 输出详细总结
     log("=" * 70)
-    in_summary = True  # 启用总结收集
     log("📊 详细签到任务完成总结")
     log("=" * 70)
     
@@ -1541,7 +1548,11 @@ def main():
         log("  " + "-" * 50)
     
     # 总体统计
-    log("📈 总体统计:")
+    in_summary = True  # 启用总结收集（推送内容从此处开始）
+    if account_group is not None:
+        log(f"📈账号组{account_group} 嘉立创签到总体统计:")
+    else:
+        log("📈 嘉立创签到总体统计:")
     log(f"  ├── 总账号数: {total_accounts}")
     log(f"  ├── 开源平台签到成功: {oshwhub_success_count}/{total_accounts}")
     log(f"  ├── 金豆签到成功: {jindou_success_count}/{total_accounts}")
