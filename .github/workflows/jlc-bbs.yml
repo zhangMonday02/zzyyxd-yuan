@@ -142,4 +142,4 @@ jobs:
           DISPLAY: ':99'
         run: |
           echo "正在运行第 ${{ matrix.index }} 组账号..."
-          python ./jlc-bbs.py "${{ matrix.users }}" "${{ matrix.pwds }}" "true"
+          python ./jlc-bbs.py "${{ matrix.users }}" "${{ matrix.pwds }}" "true" "${{ matrix.index }}"
