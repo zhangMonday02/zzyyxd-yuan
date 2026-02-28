@@ -34,7 +34,6 @@ except ImportError:
 in_summary = False
 summary_logs = []
 
-
 def log(msg, show_time=True):
     """带时间戳的日志输出"""
     if show_time:
@@ -44,7 +43,6 @@ def log(msg, show_time=True):
     print(full_msg, flush=True)
     if in_summary:
         summary_logs.append(msg)
-
 
 # ======================== 浏览器 ========================
 def create_chrome_driver(user_data_dir=None):
@@ -79,7 +77,6 @@ def create_chrome_driver(user_data_dir=None):
         {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"},
     )
     return driver
-
 
 # ======================== 登录相关========================
 def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=18):
@@ -170,7 +167,6 @@ def call_aliv3min_with_timeout(timeout_seconds=180, max_retries=18):
     log("❌ 登录脚本存在异常，无法获取 CaptchaTicket")
     return None
 
-
 def send_login_request(driver, url, method="POST", body=None):
     """通过浏览器发送登录相关请求"""
     try:
@@ -199,7 +195,6 @@ def send_login_request(driver, url, method="POST", body=None):
         log(f"❌ 登录请求执行失败: {e}")
         return None
 
-
 def perform_init_session(driver, max_retries=3):
     """初始化 Session"""
     for i in range(max_retries):
@@ -217,7 +212,6 @@ def perform_init_session(driver, max_retries=3):
         if i < max_retries - 1:
             time.sleep(2)
     return False
-
 
 def login_with_password(driver, username, password, captcha_ticket):
     """使用密码登录"""
@@ -250,7 +244,6 @@ def login_with_password(driver, username, password, captcha_ticket):
     log(f"⚠ 登录返回未知状态，接口返回: {resp}")
     return "other_error", resp
 
-
 def verify_login_on_member_page(driver, max_retries=3):
     """在 member.jlc.com 验证登录状态"""
     for attempt in range(max_retries):
@@ -275,7 +268,6 @@ def verify_login_on_member_page(driver, max_retries=3):
         if attempt < max_retries - 1:
             time.sleep(2)
     return False
-
 
 def perform_login_flow(driver, username, password, max_retries=3):
     """完整登录流程"""
@@ -327,7 +319,6 @@ def perform_login_flow(driver, username, password, max_retries=3):
                 return "login_failed"
     return "login_failed"
 
-
 # ======================== BBS 功能函数 ========================
 def extract_secretkey(driver, max_retries=5):
     """从浏览器性能日志中提取 secretkey"""
@@ -375,7 +366,6 @@ def extract_secretkey(driver, max_retries=5):
             except Exception:
                 pass
     return None
-
 
 def send_bbs_request(driver, url, method="POST", body=None, secretkey="", max_retries=3):
     """通过浏览器发送 BBS API 请求（自动携带 cookie）"""
@@ -430,7 +420,6 @@ def send_bbs_request(driver, url, method="POST", body=None, secretkey="", max_re
 
     return None
 
-
 def is_bbs_auth_error(resp):
     """检查BBS API响应是否为认证/会话错误"""
     if not resp or not isinstance(resp, dict):
@@ -442,7 +431,6 @@ def is_bbs_auth_error(resp):
     if "客户不存在" in msg or "未登录" in msg or "会话失效" in msg:
         return True
     return False
-
 
 def validate_and_fix_bbs_session(driver, secretkey, target_url, max_fix_attempts=3):
     """验证BBS会话有效性，如果无效则尝试通过重新触发SSO来修复"""
@@ -506,7 +494,6 @@ def validate_and_fix_bbs_session(driver, secretkey, target_url, max_fix_attempts
     log("❌ 无法建立有效的BBS会话")
     return None
 
-
 def get_sign_info(driver, secretkey, label="", max_retries=3):
     """获取签到信息（含当前积分）"""
     for attempt in range(max_retries):
@@ -541,7 +528,6 @@ def get_sign_info(driver, secretkey, label="", max_retries=3):
 
     return {"success": False, "error": "请求失败"}
 
-
 def do_sign_in(driver, secretkey, max_retries=3):
     """执行签到"""
     for attempt in range(max_retries):
@@ -572,7 +558,6 @@ def do_sign_in(driver, secretkey, max_retries=3):
                 time.sleep(2)
 
     return {"status": "failed", "error": "请求失败"}
-
 
 def get_remaining_lottery_times(driver, max_retries=3):
     """从前端页面提取剩余抽奖次数"""
@@ -613,7 +598,6 @@ def get_remaining_lottery_times(driver, max_retries=3):
     log("⚠ 无法从页面获取剩余抽奖次数")
     return {"success": False, "error": "无法从页面提取抽奖次数"}
 
-
 def do_lottery(driver, secretkey):
     """执行单次抽奖"""
     resp = send_bbs_request(
@@ -637,7 +621,6 @@ def do_lottery(driver, secretkey):
             return {"status": "failed", "error": resp.get("message", "未知错误"), "raw": resp}
     return {"status": "failed", "error": "请求失败"}
 
-
 def get_koi_cards(driver, secretkey, max_retries=3):
     """获取鲤鱼卡数量"""
     for attempt in range(max_retries):
@@ -660,7 +643,6 @@ def get_koi_cards(driver, secretkey, max_retries=3):
                 time.sleep(2)
 
     return {"success": False, "error": "请求失败"}
-
 
 # ======================== 单账号处理 ========================
 def process_single_account(username, password, account_index, total_accounts, start_pwd_idx=0):
@@ -931,7 +913,6 @@ def process_single_account(username, password, account_index, total_accounts, st
     log(f"❌ 账号 {account_index} 所有候选密码均提示错误，跳过此账号")
     return result
 
-
 def process_account_with_retry(username, password, account_index, total_accounts, max_retries=2):
     """带重试的账号处理"""
     last_pwd_idx = 0
@@ -961,14 +942,14 @@ def process_account_with_retry(username, password, account_index, total_accounts
 
     return result
 
-
 # ======================== 推送相关========================
-def push_summary(push_text):
+def push_summary(push_text, title=None):
     """推送总结日志到各平台"""
     if not push_text:
         return
 
-    title = "嘉立创BBS签到&抽奖总结"
+    if title is None:
+        title = "嘉立创BBS签到&抽奖总结"
     full_text = f"{title}\n{push_text}"
     pushed_any = False
 
@@ -1092,7 +1073,6 @@ def push_summary(push_text):
     if not pushed_any:
         log("ℹ 未配置任何推送链接，跳过实际推送")
 
-
 def has_any_push_config():
     """检查是否配置了任何推送渠道"""
     keys = [
@@ -1102,15 +1082,16 @@ def has_any_push_config():
     ]
     return any(os.getenv(k) for k in keys)
 
-
 # ======================== 主函数 ========================
 def main():
     global in_summary
 
     if len(sys.argv) < 3:
-        print("用法: python bbs_sign.py 账号1,账号2... 密码1,密码2... [失败退出标志]")
+        print("用法: python bbs_sign.py 账号1,账号2... 密码1,密码2... [失败退出标志] [账号组编号]")
         print("示例: python bbs_sign.py user1,user2 pwd1,pwd2")
         print("示例: python bbs_sign.py user1,user2 pwd1,pwd2 true")
+        print("示例: python bbs_sign.py user1,user2 pwd1,pwd2 true 4")
+        print("账号组编号: 只能输入数字，输入其他值则忽略")
         sys.exit(1)
 
     usernames = [u.strip() for u in sys.argv[1].split(",") if u.strip()]
@@ -1119,6 +1100,12 @@ def main():
     fail_exit = False
     if len(sys.argv) >= 4:
         fail_exit = sys.argv[3].lower() == "true"
+
+    # 解析第4个参数（账号组编号），只接受纯数字，其他值忽略
+    account_group = None
+    if len(sys.argv) >= 5:
+        if sys.argv[4].isdigit():
+            account_group = sys.argv[4]
 
     if len(usernames) != len(passwords):
         log("❌ 错误: 账号和密码数量不匹配!")
@@ -1142,11 +1129,13 @@ def main():
             time.sleep(5)
 
     # ======================== 总结输出 ========================
-    in_summary = True
 
     log("", show_time=False)
     log("=" * 60, show_time=False)
-    log("📊 嘉立创BBS签到 & 抽奖 结果总结", show_time=False)
+    if account_group is not None:
+        log(f"📊嘉立创BBS签到 & 抽奖 账号组{account_group}结果总结", show_time=False)
+    else:
+        log("📊 嘉立创BBS签到 & 抽奖 结果总结", show_time=False)
     log("=" * 60, show_time=False)
 
     push_reasons = []
@@ -1270,11 +1259,20 @@ def main():
 
     if should_push:
         reason_text = "/".join(push_reasons)
-        log(f"本次运行推送，推送原因: {reason_text}", show_time=False)
+        in_summary = True  # 启用总结收集（推送内容从此处开始）
+        if account_group is not None:
+            log(f"账号组{account_group}:本次运行推送，推送原因: {reason_text}", show_time=False)
+        else:
+            log(f"本次运行推送，推送原因: {reason_text}", show_time=False)
 
         push_text = "\n".join(summary_logs)
+        # 确定推送标题
+        if account_group is not None:
+            push_title = f"📊嘉立创BBS签到 & 抽奖 账号组{account_group}结果总结"
+        else:
+            push_title = "嘉立创BBS签到&抽奖总结"
         if has_any_push_config():
-            push_summary(push_text)
+            push_summary(push_text, push_title)
         else:
             log("ℹ 未配置任何推送链接，跳过实际推送", show_time=False)
     else:
@@ -1296,7 +1294,6 @@ def main():
         else:
             log("✅ 程序正常退出")
         sys.exit(0)
-
 
 if __name__ == "__main__":
     main()
