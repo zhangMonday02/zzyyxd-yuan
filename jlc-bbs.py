@@ -639,7 +639,7 @@ def do_lottery(driver, secretkey):
 
 
 def get_koi_cards(driver, secretkey, max_retries=3):
-    """获取锦鲤卡数量"""
+    """获取鲤鱼卡数量"""
     for attempt in range(max_retries):
         timestamp = int(time.time() * 1000)
         url = f"https://www.jlc-bbs.com/api/bbs/prizeOrder/getPrizeCard?_t={timestamp}"
@@ -649,14 +649,14 @@ def get_koi_cards(driver, secretkey, max_retries=3):
                 count = resp.get("data", 0)
                 return {"success": True, "count": count}
             else:
-                log(f"⚠ 获取锦鲤卡失败，接口返回: {resp}")
+                log(f"⚠ 获取鲤鱼卡失败，接口返回: {resp}")
                 if attempt < max_retries - 1:
                     time.sleep(2)
                     continue
                 return {"success": False, "error": resp.get("message", "未知错误"), "raw": resp}
         else:
             if attempt < max_retries - 1:
-                log(f"⚠ 获取锦鲤卡请求失败，重试中 ({attempt + 1}/{max_retries})...")
+                log(f"⚠ 获取鲤鱼卡请求失败，重试中 ({attempt + 1}/{max_retries})...")
                 time.sleep(2)
 
     return {"success": False, "error": "请求失败"}
@@ -706,7 +706,7 @@ def process_single_account(username, password, account_index, total_accounts, st
         # 最终
         "final_points": None,
         "final_points_error": None,
-        # 锦鲤卡
+        # 鲤鱼卡
         "koi_cards": None,
         "koi_cards_error": None,
     }
@@ -892,15 +892,15 @@ def process_single_account(username, password, account_index, total_accounts, st
                 if result["sign_after_points"] is not None and not result["lottery_prizes"]:
                     result["final_points"] = result["sign_after_points"]
 
-            # ============ 锦鲤卡 ============
-            log("📡 检查锦鲤卡数量...")
+            # ============ 鲤鱼卡 ============
+            log("📡 检查鲤鱼卡数量...")
             koi_result = get_koi_cards(driver, secretkey)
             if koi_result.get("success"):
                 result["koi_cards"] = koi_result["count"]
-                log(f"🐟 锦鲤卡数量: {result['koi_cards']}")
+                log(f"🐟 鲤鱼卡数量: {result['koi_cards']}")
             else:
                 result["koi_cards_error"] = koi_result.get("error", "未知")
-                log(f"⚠ 获取锦鲤卡数量失败: {result['koi_cards_error']}")
+                log(f"⚠ 获取鲤鱼卡数量失败: {result['koi_cards_error']}")
 
             log(f"✅ 账号 {account_index} 处理完成")
             return result
@@ -1237,19 +1237,19 @@ def main():
             err = res.get("final_points_error", "未知")
             log(f"├── 最终积分: 获取失败，原因: {err}", show_time=False)
 
-        # === 锦鲤卡 ===
+        # === 鲤鱼卡 ===
         koi = res.get("koi_cards")
         if koi is not None:
-            log(f"├── 锦鲤卡数量: {koi}", show_time=False)
+            log(f"├── 鲤鱼卡数量: {koi}", show_time=False)
         else:
             err = res.get("koi_cards_error", "未知")
-            log(f"├── 锦鲤卡数量: 获取失败，原因: {err}", show_time=False)
+            log(f"├── 鲤鱼卡数量: 获取失败，原因: {err}", show_time=False)
 
         # === 抽奖奖品 ===
         for pi, prize in enumerate(res.get("lottery_prizes", []), 1):
             log(f"├── 抽奖{pi}奖品: {prize}", show_time=False)
-            # 检查是否中了非积分奖品
-            if "积分" not in prize:
+            # 检查是否中了非积分且非鲤鱼卡的奖品
+            if "积分" not in prize and "鲤鱼卡" not in prize:
                 push_reasons.append(f"账号{idx}中奖{prize}")
 
         log("--------------------------------------------------", show_time=False)
