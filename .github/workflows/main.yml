@@ -152,7 +152,9 @@ jobs:
           fi
           if [ -d logs ]; then
             for f in logs/*.log; do
-              [ -f "$f" ] && mv "$f" "logs/第${{ matrix.index }}组_$(basename "$f")"
+              if [ -f "$f" ]; then
+                mv "$f" "logs/第${{ matrix.index }}组_$(basename "$f")"
+              fi
             done
           fi
 
