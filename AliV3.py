@@ -9,6 +9,7 @@ import math
 from functools import partial
 from urllib.parse import parse_qs, unquote
 from DrissionPage import ChromiumPage, ChromiumOptions
+from pathlib import Path
 
 subprocess.Popen = partial(subprocess.Popen, encoding='utf-8', errors='ignore')
 
@@ -218,7 +219,8 @@ class AliV3:
 
     def getCap(self):
         page = None
-        target_url = "https://aliv3.zhangmonday.top/?prefix=1tbpug&SceneId=6mw4mrmg"
+        local_html_path = Path(__file__).parent / 'aliv3.html'
+        target_url = local_html_path.as_uri() + "?prefix=1tbpug&SceneId=6mw4mrmg"
         max_browser_retries = 3
         
         for browser_attempt in range(1, max_browser_retries + 1):
