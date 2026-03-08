@@ -225,8 +225,8 @@ jobs:
           echo "下载的artifacts内容:"
           ls -la ./artifacts/
           
-          # 移动所有结果文件到当前目录
-          find ./artifacts -name "jlc_result_*.json" -exec mv {} . \; 2>/dev/null || true
+          # 移动所有结果文件到当前目录 (增加 -type f 限定只移动文件)
+          find ./artifacts -type f -name "jlc_result_*.json" -exec mv {} . \; 2>/dev/null || true
           
           echo "工作目录中的结果文件:"
           ls -la jlc_result_*.json 2>/dev/null || echo "未找到结果文件"
