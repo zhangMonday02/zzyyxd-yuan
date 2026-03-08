@@ -152,17 +152,17 @@ jobs:
         if: always()
         run: |
           if [ -f password-changed.txt ]; then
-            mv password-changed.txt "第${{ matrix.index }}组密码变更记录.txt"
+            mv password-changed.txt "password_changed_group${{ matrix.index }}.txt"
           fi
 
       - name: '上传密码修改记录'
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          path: 第${{ matrix.index }}组密码变更记录.txt
+          path: password_changed_group${{ matrix.index }}.txt
           if-no-files-found: ignore
           archive: false
-          retention-days: 3
+          retention-days: 5
 
       - name: '上传结果文件供汇总'
         if: always()
@@ -235,12 +235,20 @@ jobs:
         run: |
           python ./jlc_summary.py
 
-      - name: '获取生成的Excel文件名'
+      - name: '获取并修改生成的Excel文件名'
         id: get-excel
         run: |
           excel_file=$(ls *.xlsx 2>/dev/null | head -1)
-          echo "excel_file=$excel_file" >> $GITHUB_OUTPUT
-          echo "找到的Excel文件: $excel_file"
+          if [ -n "$excel_file" ]; then
+            date_str=$(date +%Y%m%d)
+            new_name="${date_str}_jlc_gold_beans_ranking.xlsx"
+            mv "$excel_file" "$new_name"
+            echo "excel_file=$new_name" >> $GITHUB_OUTPUT
+            echo "重命名: $excel_file -> $new_name"
+          else
+            echo "未找到Excel文件"
+            echo "excel_file=" >> $GITHUB_OUTPUT
+          fi
 
       - name: '上传金豆排名Excel'
         if: steps.get-excel.outputs.excel_file != ''
@@ -249,7 +257,7 @@ jobs:
           path: ${{ steps.get-excel.outputs.excel_file }}
           if-no-files-found: ignore
           archive: false
-          retention-days: 7
+          retention-days: 5
 
       - name: '清理 GitHub 界面的临时 JSON Artifacts'
         uses: geekyeggo/delete-artifact@v5
