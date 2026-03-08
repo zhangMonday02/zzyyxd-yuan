@@ -97,9 +97,9 @@ def calculate_year_end_prediction(current_beans):
             remaining_days = 0
         # 按照一周大约22个金豆计算，每天平均约 22/7 个
         estimated_future_beans = int(remaining_days * (22 / 7))
-        return current_beans + estimated_future_beans
+        return int(current_beans) + estimated_future_beans
     except Exception:
-        return current_beans
+        return int(current_beans)
 
 def get_display_status(acc):
     """获取签到状态的显示文本"""
@@ -153,8 +153,8 @@ def generate_excel():
     
     # 定义签到状态的颜色样式
     status_styles = {
-        'success': Font(color="00FF00", bold=True),      # 绿色 - 成功
-        'already': Font(color="00FF00", bold=True),       # 绿色 - 已签到过
+        'success': Font(color="32CD32", bold=True),      # 绿色 - 成功
+        'already': Font(color="32CD32", bold=True),       # 绿色 - 已签到过
         'fail': Font(color="C00000", bold=True),          # 深红色 - 失败
         'password': Font(color="FF6600", bold=True),      # 橙色 - 密码错误
     }
@@ -175,9 +175,9 @@ def generate_excel():
         # 签到状态
         display_status = get_display_status(acc)
         
-        # 年底预计
+        # 年底预计（强制转为int）
         if display_jindou > 0:
-            year_end_prediction = calculate_year_end_prediction(display_jindou)
+            year_end_prediction = calculate_year_end_prediction(int(display_jindou))
         else:
             year_end_prediction = ''
         
@@ -223,8 +223,8 @@ def generate_excel():
                 else:
                     cell.font = status_styles['fail']
             
-            # 年底预计列样式
-            if col_num == 7 and isinstance(year_end_prediction, int):
+            # 年底预计列样式（使用 (int, float) 兼容两种类型）
+            if col_num == 7 and isinstance(year_end_prediction, (int, float)):
                 if year_end_prediction >= 1500:
                     cell.font = Font(color="C00000", bold=True)  # 深红色
                 elif year_end_prediction >= 1000:
