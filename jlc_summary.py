@@ -166,7 +166,7 @@ def generate_excel():
         acc['global_rank'] = rank
     
     # ==============================
-    # 填充第一个 Sheet（按金豆排名）
+    # 填充第一个 Sheet（全局金豆排名）
     # ==============================
     for rank, acc in enumerate(all_accounts, 1):
         username = acc.get('username', '')
@@ -239,17 +239,16 @@ def generate_excel():
     # ==============================
     # 填充第二个 Sheet（按组及原顺序排序）
     # ==============================
-    ws_group = wb.create_sheet("按组明细")
+    ws_group = wb.create_sheet("按组顺序")
     ws_group.append(headers)
     
-    # 设置第二个 Sheet 标题行样式
     for col_num, header in enumerate(headers, 1):
         cell = ws_group.cell(row=1, column=col_num)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = header_alignment
 
-    # 按照组别和原本的账号顺序重新排序
+    # 按照组别和原本的账号顺序排序
     accounts_by_group = sorted(all_accounts, key=lambda x: (x.get('group_index', 0), x.get('account_index', 0)))
     
     current_row = 2
@@ -258,12 +257,11 @@ def generate_excel():
     for acc in accounts_by_group:
         group_index = acc.get('group_index', 0)
         
-        # 如果遇到不同组别切换（且不是循环第一项），插入一行灰色分隔行
+        # 分隔行
         if last_group is not None and group_index != last_group:
             ws_group.append([''] * total_cols)
             for col_num in range(1, total_cols + 1):
                 cell = ws_group.cell(row=current_row, column=col_num)
-                # 浅灰色背景作为视觉分割
                 cell.fill = PatternFill(start_color="EFEFEF", end_color="EFEFEF", fill_type="solid")
             current_row += 1
             
@@ -283,21 +281,14 @@ def generate_excel():
         else:
             year_end_prediction = ''
             
-        # 第一列使用全局排名供参考
         global_rank = acc.get('global_rank', '')
         
         row_data = [
-            global_rank,
-            display_jindou,
-            username,
-            display_password,
-            f"{group_index}组账号{acc.get('account_index', 0)}",
-            display_status,
-            year_end_prediction
+            global_rank, display_jindou, username, display_password,
+            f"{group_index}组账号{acc.get('account_index', 0)}", display_status, year_end_prediction
         ]
         ws_group.append(row_data)
         
-        # 复制数据行样式
         for col_num in range(1, total_cols + 1):
             cell = ws_group.cell(row=current_row, column=col_num)
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -332,6 +323,98 @@ def generate_excel():
         current_row += 1
 
     # ==============================
+    # 填充第三个 Sheet（按组排名 - 组内金豆从高到低）
+    # ==============================
+    ws_group_rank = wb.create_sheet("按组排名")
+    ws_group_rank.append(headers)
+    
+    for col_num, header in enumerate(headers, 1):
+        cell = ws_group_rank.cell(row=1, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    # 按照组别升序，再按金豆数量降序（加负号实现降序）
+    accounts_by_group_rank = sorted(
+        all_accounts, 
+        key=lambda x: (
+            x.get('group_index', 0), 
+            -x.get('display_jindou', max(x.get('final_jindou', 0), x.get('initial_jindou', 0)))
+        )
+    )
+    
+    current_row_rank = 2
+    last_group_rank = None
+    
+    for acc in accounts_by_group_rank:
+        group_index = acc.get('group_index', 0)
+        
+        # 分隔行
+        if last_group_rank is not None and group_index != last_group_rank:
+            ws_group_rank.append([''] * total_cols)
+            for col_num in range(1, total_cols + 1):
+                cell = ws_group_rank.cell(row=current_row_rank, column=col_num)
+                cell.fill = PatternFill(start_color="EFEFEF", end_color="EFEFEF", fill_type="solid")
+            current_row_rank += 1
+            
+        last_group_rank = group_index
+        
+        username = acc.get('username', '')
+        display_jindou = acc.get('display_jindou', max(acc.get('final_jindou', 0), acc.get('initial_jindou', 0)))
+        actual_password = acc.get('actual_password', '')
+        jindou_success = acc.get('jindou_success', False)
+        password_error = acc.get('password_error', False)
+        
+        display_password = actual_password if actual_password else ''
+        display_status = get_display_status(acc)
+        
+        if display_jindou > 0:
+            year_end_prediction = calculate_year_end_prediction(int(display_jindou))
+        else:
+            year_end_prediction = ''
+            
+        global_rank = acc.get('global_rank', '')
+        
+        row_data = [
+            global_rank, display_jindou, username, display_password,
+            f"{group_index}组账号{acc.get('account_index', 0)}", display_status, year_end_prediction
+        ]
+        ws_group_rank.append(row_data)
+        
+        for col_num in range(1, total_cols + 1):
+            cell = ws_group_rank.cell(row=current_row_rank, column=col_num)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            
+            if col_num == 1:
+                cell.font = Font(bold=True)
+            if col_num == 2:
+                if display_jindou >= 500:
+                    cell.font = Font(color="C00000", bold=True)
+                elif display_jindou >= 300:
+                    cell.font = Font(color="FF6600", bold=True)
+                elif display_jindou >= 100:
+                    cell.font = Font(color="0070C0", bold=True)
+            if col_num == 6:
+                if password_error:
+                    cell.font = status_styles['password']
+                elif jindou_success:
+                    if display_status == '已签到过':
+                        cell.font = status_styles['already']
+                    else:
+                        cell.font = status_styles['success']
+                else:
+                    cell.font = status_styles['fail']
+            if col_num == 7 and isinstance(year_end_prediction, (int, float)):
+                if year_end_prediction >= 1500:
+                    cell.font = Font(color="C00000", bold=True)
+                elif year_end_prediction >= 1000:
+                    cell.font = Font(color="FF6600", bold=True)
+                elif year_end_prediction >= 800:
+                    cell.font = Font(color="0070C0", bold=True)
+                    
+        current_row_rank += 1
+
+    # ==============================
     # 全局格式设置（列宽、边框、冻结窗格）
     # ==============================
     column_widths = [8, 12, 18, 15, 18, 18, 12]
@@ -357,10 +440,18 @@ def generate_excel():
         for cell in row:
             cell.border = thin_border
     ws_group.freeze_panes = 'A2'
+
+    # 格式化 Sheet 3
+    for i, width in enumerate(column_widths, 1):
+        ws_group_rank.column_dimensions[get_column_letter(i)].width = width
+    for row in ws_group_rank.iter_rows(min_row=1, max_row=ws_group_rank.max_row, min_col=1, max_col=total_cols):
+        for cell in row:
+            cell.border = thin_border
+    ws_group_rank.freeze_panes = 'A2'
     
     # 保存文件
     wb.save(filename)
-    log(f"Excel文件已生成: {filename}")
+    log(f"Excel文件已生成: {filename} (包含按组排名Sheet)")
     
     return filename
 
